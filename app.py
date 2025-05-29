@@ -13,7 +13,7 @@ from zip_exporter import create_zip_bundle
 
 st.set_page_config(page_title="Acroform Informer", layout="wide")
 
-# UI styling
+# Dark theme UI override
 st.markdown("""
     <style>
     body {
@@ -34,7 +34,7 @@ st.markdown("""
 st.title("Acroform Informer")
 st.subheader("Forensic PDF Comparison and Affidavit Generator")
 
-# User file upload
+# File uploader only — no certification text
 uploaded_files = st.file_uploader("Upload 2 or more PDF files for analysis", type="pdf", accept_multiple_files=True)
 
 if uploaded_files and len(uploaded_files) >= 2:
@@ -42,35 +42,35 @@ if uploaded_files and len(uploaded_files) >= 2:
         temp_dir = tempfile.mkdtemp(dir="/tmp")
         file_map = {}
 
-        # Save uploaded files
         for uploaded in uploaded_files:
             file_path = os.path.join(temp_dir, uploaded.name)
             with open(file_path, "wb") as f:
                 f.write(uploaded.read())
             file_map[uploaded.name] = file_path
 
-        # Metadata and hash display
+        st.success(f"{len(uploaded_files)} PDF files uploaded.")
+
         st.subheader("Extracted Metadata & SHA-256 Hashes")
         metadata = {}
+
         for fname, fpath in file_map.items():
-            meta = extract_metadata(fpath)
             with open(fpath, "rb") as f:
-                sha256 = hashlib.sha256(f.read()).hexdigest()
-            meta['sha256'] = sha256
-            metadata[fname] = meta
+                file_bytes = f.read()
+                sha256 = hashlib.sha256(file_bytes).hexdigest()
+                meta = extract_metadata(fpath, file_bytes)
+                meta['sha256'] = sha256
+                metadata[fname] = meta
 
             st.markdown(f"**{fname}**")
             st.text(f"SHA-256: {sha256}")
             st.json(meta)
 
-        # Report init
         report_csv = os.path.join(temp_dir, "batch_report.csv")
         init_report_csv(report_csv)
 
         affidavit_dir = os.path.join(temp_dir, "affidavits")
         os.makedirs(affidavit_dir, exist_ok=True)
 
-        # Match scoring and affidavit generation
         st.subheader("Suspicious Match Report & Affidavit Generation")
         results = []
         names = list(file_map.keys())
@@ -97,17 +97,17 @@ if uploaded_files and len(uploaded_files) >= 2:
         if not results:
             st.info("No suspicious matches (score > 50) were detected.")
 
-        # ZIP export
         zip_path = os.path.join(temp_dir, "evidence_bundle.zip")
         create_zip_bundle(affidavit_dir, report_csv, zip_path)
 
         with open(zip_path, "rb") as f:
             st.download_button(
-                label="Download Evidence Bundle (ZIP)",
+                label="📥 Download Evidence Bundle (ZIP)",
                 data=f,
                 file_name="evidence_bundle.zip",
                 mime="application/zip"
             )
 
-    # Temp cleanup (optional if app stays up)
-    shutil.rmtree(temp_dir)
+        shutil.rmtree(temp_dir)
+else:
+    st.warning("Please upload at least 2 PDF files for analysis.")
