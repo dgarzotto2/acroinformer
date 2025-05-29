@@ -2,50 +2,76 @@
 
 from reportlab.lib.pagesizes import LETTER
 from reportlab.pdfgen import canvas
-import io
-import datetime
+from datetime import datetime
+import socket
 
-def generate_affidavit_pdf(result):
-    buffer = io.BytesIO()
-    c = canvas.Canvas(buffer, pagesize=LETTER)
-    c.setFont("Helvetica", 11)
+def write_affidavit(output_path, metadata, filename, sha256, findings, analyst_title="Founder, Forensix, LLC"):
+    c = canvas.Canvas(output_path, pagesize=LETTER)
     width, height = LETTER
-    y = height - 50
-
-    def writeln(text, indent=0):
-        nonlocal y
-        c.drawString(50 + indent, y, text)
-        y -= 15
+    margin = 50
+    y = height - margin
 
     c.setFont("Helvetica-Bold", 14)
-    writeln("Forensic Affidavit Summary")
-    c.setFont("Helvetica", 11)
-    writeln(f"Document: {result['filename']}")
-    writeln(f"Date: {datetime.datetime.utcnow().isoformat()} UTC")
-    writeln("")
+    c.drawString(margin, y, "Forensic Document Affidavit")
+    y -= 30
 
-    writeln("Metadata:", 10)
-    for k, v in result["metadata"].items():
-        writeln(f"- {k}: {v}", 20)
+    c.setFont("Helvetica", 10)
+    c.drawString(margin, y, f"Date of Analysis: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}")
+    y -= 15
+    c.drawString(margin, y, f"Analyzed File: {filename}")
+    y -= 15
+    c.drawString(margin, y, f"SHA-256: {sha256}")
+    y -= 15
+    c.drawString(margin, y, f"Hostname: {socket.gethostname()}")
+    y -= 25
 
-    writeln("\nSuppression Flags:", 10)
-    for f in result["suppression_flags"]:
-        writeln(f"- {f}", 20)
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(margin, y, "Findings:")
+    y -= 15
 
-    writeln("\nLicense Flags:", 10)
-    for f in result["license_flags"]:
-        writeln(f"- {f}", 20)
+    c.setFont("Helvetica", 10)
+    for line in findings:
+        for subline in split_line(line, width - 2 * margin, c):
+            c.drawString(margin, y, subline)
+            y -= 12
+            if y < margin:
+                c.showPage()
+                y = height - margin
 
-    writeln("\nEntities Extracted:", 10)
-    for k, v in result["entities"].items():
-        writeln(f"- {k}: {v}", 20)
+    y -= 20
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(margin, y, "Certification:")
+    y -= 15
 
-    writeln("\nSummary:", 10)
-    for line in result["summary"].split("\n"):
-        writeln(f"{line}", 20)
+    cert_text = (
+        f"I hereby certify that the analysis above was conducted using industry-standard forensic methods "
+        f"to the best of my ability. All observations are based on technical evidence recovered from the provided file. "
+        f"\n\nCertified by Forensix, LLC"
+    )
+    for subline in split_line(cert_text, width - 2 * margin, c):
+        c.drawString(margin, y, subline)
+        y -= 12
 
-    writeln("\nCertified by Forensix, LLC", 10)
+    y -= 30
+    c.drawString(margin, y, "Signature: ____________________________")
+    y -= 15
+    c.drawString(margin, y, f"Title: {analyst_title}")
+    y -= 15
+    c.drawString(margin, y, "Date: _________________________________")
+
     c.showPage()
     c.save()
-    buffer.seek(0)
-    return buffer.read()
+
+def split_line(text, max_width, canvas_obj):
+    words = text.split()
+    lines = []
+    line = ""
+    for word in words:
+        if canvas_obj.stringWidth(line + " " + word) < max_width:
+            line += " " + word if line else word
+        else:
+            lines.append(line)
+            line = word
+    if line:
+        lines.append(line)
+    return lines
