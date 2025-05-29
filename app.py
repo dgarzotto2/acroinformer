@@ -1,94 +1,56 @@
 import streamlit as st
-import os
-import tempfile
-import hashlib
-import shutil
-import zipfile
-import base64
-from pdf_utils import extract_metadata
-from affidavit_writer import generate_affidavit
+from affidavit_writer import render_affidavit
+from acroform_audit import audit_acroform_fields
+from metadata_comparator import compare_metadata
 
-st.set_page_config(page_title="Acroform Informer", layout="wide")
+# Example metadata collection loop — assumed earlier
+all_metadata = []
+all_acroforms = []
 
-st.title("Acroform Informer")
-st.markdown("Upload 2 or more PDF files for analysis.")
+for fname, fpath in file_map.items():
+    with open(fpath, "rb") as f:
+        file_bytes = f.read()
 
-uploaded_files = st.file_uploader(
-    "Select PDF files", type="pdf", accept_multiple_files=True
-)
+    metadata = extract_metadata(fpath, file_bytes)
+    acro_data = audit_acroform_fields(file_bytes, filename=fname)
 
-if uploaded_files and len(uploaded_files) >= 2:
-    with st.spinner("Processing uploaded PDFs..."):
-        temp_dir = tempfile.mkdtemp(dir="/tmp")
-        file_map = {}
-        file_hashes = {}
-        metadata_map = {}
+    all_metadata.append(metadata)
+    all_acroforms.append(acro_data)
 
-        for uploaded in uploaded_files:
-            fname = uploaded.name
-            file_path = os.path.join(temp_dir, fname)
-            file_bytes = uploaded.read()
+# Metadata Summary
+st.header("📄 Metadata Comparison Report")
 
-            if len(file_bytes) < 1000:
-                st.warning(f"{fname} appears to be too small. Skipping.")
-                continue
-
-            with open(file_path, "wb") as f:
-                f.write(file_bytes)
-
-            file_map[fname] = file_path
-            file_hashes[fname] = hashlib.sha256(file_bytes).hexdigest()
-
-            try:
-                metadata = extract_metadata(file_path, file_bytes)
-                metadata_map[fname] = metadata
-            except Exception as e:
-                st.error(f"Failed to extract metadata from {fname}: {e}")
-
-        # Compare metadata
-        report_html, risk_score = generate_affidavit(metadata_map, file_hashes)
-
-        # Save affidavit
-        affidavit_path = os.path.join(temp_dir, "affidavit_report.pdf")
-        with open(affidavit_path, "wb") as f:
-            f.write(report_html)
-
-        # Zip everything
-        zip_path = os.path.join(temp_dir, "acroinformer_output.zip")
-        with zipfile.ZipFile(zip_path, "w") as zipf:
-            for f in file_map.values():
-                zipf.write(f, os.path.basename(f))
-            zipf.write(affidavit_path, "affidavit_report.pdf")
-
-        with open(zip_path, "rb") as f:
-            st.download_button(
-                label="📦 Download ZIP Bundle",
-                data=f,
-                file_name="acroinformer_output.zip",
-                mime="application/zip",
-            )
-
-        # SHA-256 and Preview
-        st.markdown("### 📄 Preview Uploaded PDFs")
-
-        for fname, fpath in file_map.items():
-            sha256 = file_hashes.get(fname, "N/A")
-            with open(fpath, "rb") as f:
-                pdf_bytes = f.read()
-                b64_pdf = base64.b64encode(pdf_bytes).decode("utf-8")
-
-            st.markdown(
-                f"""
-                <div style="border:1px solid #999;padding:8px;margin-bottom:12px;">
-                    <strong>{fname}</strong><br>
-                    <span title="SHA-256: {sha256}" style="font-size:0.9em;color:#666;">
-                        Hover to view SHA-256 hash
-                    </span><br>
-                    <iframe src="data:application/pdf;base64,{b64_pdf}" width="100%" height="500px" style="border:none;"></iframe>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
+if len(all_metadata) >= 2:
+    meta_result = compare_metadata(all_metadata)
+    for issue in meta_result["discrepancies"]:
+        st.warning(f"⚠️ {issue}")
+    if meta_result["flags"]:
+        for f in meta_result["flags"]:
+            st.error(f"🚨 {f}")
 else:
-    st.warning("Please upload at least 2 PDF files for analysis.")
+    st.info("Upload at least two files for metadata comparison.")
+
+# AcroForm Summary
+st.header("🧾 AcroForm Audit Summary")
+
+for acro in all_acroforms:
+    with st.expander(f"Form Audit: {acro['filename']}"):
+        if not acro["has_acroform"]:
+            st.info("No AcroForm found.")
+        else:
+            st.success("AcroForm structure detected.")
+            st.write(f"Fields found: {acro['field_names']}")
+            if acro["empty_fields"]:
+                st.warning(f"Empty fields: {acro['empty_fields']}")
+            if acro["signature_fields"]:
+                st.info(f"Signature fields: {acro['signature_fields']}")
+            if acro["synthetic_warnings"]:
+                for warn in acro["synthetic_warnings"]:
+                    st.error(f"⚠️ {warn}")
+
+# Optional PDF affidavit generation
+st.header("📑 Forensic Affidavit Summary")
+if st.button("Generate Forensic PDF Report"):
+    affidavit_path = render_affidavit(all_metadata, all_acroforms)
+    st.success("Affidavit ready.")
+    st.download_button("Download Affidavit", open(affidavit_path, "rb"), file_name="forensic_affidavit.pdf")
