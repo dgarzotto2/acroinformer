@@ -1,46 +1,94 @@
 import streamlit as st
-import tempfile
 import os
-from modules.decode_controller import decode_pdf
-from modules.gpt_fraud_summary import summarize_fraud
+import hashlib
+import tempfile
+import zipfile
+from utils.metadata import extract_metadata
+from utils.utility import display_pdf, compare_metadata_across_files
 
-st.set_page_config(page_title="PDF Forensic Scanner", layout="wide")
+st.set_page_config(page_title="PDF Forensic Metadata Audit", layout="wide")
 
-st.title("PDF Forensic Scanner")
-st.markdown("Upload one or more PDFs to perform a formal fraud risk assessment. All output is formatted for evidentiary review.")
+def compute_sha256(file_bytes):
+    return hashlib.sha256(file_bytes).hexdigest()
 
-uploaded_files = st.file_uploader("Upload PDF(s)", type=["pdf"], accept_multiple_files=True)
+def handle_single_file(uploaded_file):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        file_path = os.path.join(tmpdir, uploaded_file.name)
+        with open(file_path, "wb") as f:
+            f.write(uploaded_file.read())
+        file_sha256 = compute_sha256(open(file_path, "rb").read())
+        result = extract_metadata(file_path)
+        result["filename"] = uploaded_file.name
+        result["sha256"] = file_sha256
+        return [result]
 
-if uploaded_files:
-    for uploaded_file in uploaded_files:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
-            tmp_file.write(uploaded_file.read())
-            file_path = tmp_file.name
+def handle_zip_file(zip_file):
+    extracted_results = []
+    with tempfile.TemporaryDirectory() as tmpdir:
+        zip_path = os.path.join(tmpdir, "batch.zip")
+        with open(zip_path, "wb") as f:
+            f.write(zip_file.read())
+        with zipfile.ZipFile(zip_path, "r") as zip_ref:
+            zip_ref.extractall(tmpdir)
+            for filename in zip_ref.namelist():
+                if filename.lower().endswith(".pdf"):
+                    file_path = os.path.join(tmpdir, filename)
+                    file_sha256 = compute_sha256(open(file_path, "rb").read())
+                    result = extract_metadata(file_path)
+                    result["filename"] = filename
+                    result["sha256"] = file_sha256
+                    extracted_results.append(result)
+    return extracted_results
 
-        st.subheader(f"File: {uploaded_file.name}")
-        result = decode_pdf(file_path)
+def main():
+    st.title("PDF Forensic Metadata and Tampering Audit")
 
-        st.markdown(f"**SHA-256 Hash:** `{result.get('sha256')}`")
+    st.markdown("Upload a single PDF file or a ZIP archive containing multiple PDFs.")
 
-        if result.get("agpl_license_flag"):
-            st.markdown("**License Flag:** Document generated using AGPL/GPL-bound PDF software (e.g., iText, BFO). This may introduce licensing constraints or exportability concerns.")
+    uploaded_file = st.file_uploader("Upload PDF or ZIP", type=["pdf", "zip"])
 
-        if result.get("cid_font_usage"):
-            st.markdown("**Obfuscation Flag:** CID font usage detected. Text suppression or glyph masking may be present.")
-
-        if result.get("fraud_flags"):
-            st.markdown("### Identified Fraud Flags")
-            for flag in result["fraud_flags"]:
-                st.markdown(f"- {flag}")
+    if uploaded_file:
+        if uploaded_file.name.endswith(".pdf"):
+            results = handle_single_file(uploaded_file)
+        elif uploaded_file.name.endswith(".zip"):
+            results = handle_zip_file(uploaded_file)
         else:
-            st.markdown("### Identified Fraud Flags")
-            st.markdown("*No fraud risk markers were detected based on current decoding heuristics.*")
+            st.error("Unsupported file type.")
+            return
 
-        if result.get("metadata"):
-            st.markdown("### Extracted Metadata")
-            for key, val in result["metadata"].items():
-                st.markdown(f"- **{key}**: {val}")
+        if results:
+            if len(results) > 1:
+                st.subheader("Batch Report Summary")
+                collisions = compare_metadata_across_files(results)
+                if collisions:
+                    st.warning("Metadata overlaps detected across multiple files.")
+                    for note in collisions:
+                        st.text(note)
+                else:
+                    st.text("No metadata collisions detected across uploaded files.")
 
-        st.markdown("### GPT-Based Risk Summary")
-        summary = summarize_fraud(result)
-        st.markdown(summary)
+            for r in results:
+                st.markdown("---")
+                st.subheader(f"File: {r.get('filename', 'Unknown')}")
+                st.markdown(f"SHA-256: `{r.get('sha256', '')}`")
+
+                st.markdown("Metadata Fields:")
+                for k, v in r.get("metadata", {}).items():
+                    st.text(f"{k}: {v}")
+
+                st.markdown("Tampering Flags:")
+                if r.get("cid_font_usage"):
+                    st.text("CID font usage detected")
+                if r.get("agpl_license_flag"):
+                    st.text("Generated with AGPL/GPL-bound PDF library (e.g., iText, BFO)")
+                if r.get("error"):
+                    st.error(f"Error during metadata extraction: {r['error']}")
+                if not r.get("cid_font_usage") and not r.get("agpl_license_flag") and not r.get("error"):
+                    st.text("No red flags detected.")
+
+                st.markdown("Preview:")
+                with open(r["filename"], "rb") as f:
+                    display_pdf(f.read(), width=700)
+
+if __name__ == "__main__":
+    main()
