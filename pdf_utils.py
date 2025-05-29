@@ -6,23 +6,22 @@ def extract_metadata(file_path: str, file_bytes: bytes) -> dict:
     Extract basic PDF metadata, detect AcroForm and signature fields,
     parse XMP Toolkit, and detect stamp‐style signature overlays.
     """
-    # Load PDF
     reader = PdfReader(file_path)
     info = reader.metadata or {}
     raw_xmp = reader.xmp_metadata
 
-    # Parse XMP Toolkit, if present
+    # Parse XMP Toolkit
     xmp_toolkit = None
     if raw_xmp:
         try:
-            xml_root = etree.fromstring(raw_xmp)
-            tk = xml_root.find(".//{http://ns.adobe.com/xap/1.0/}Toolkit")
+            root = etree.fromstring(raw_xmp)
+            tk = root.find(".//{http://ns.adobe.com/xap/1.0/}Toolkit")
             if tk is not None:
                 xmp_toolkit = tk.text
         except Exception:
             pass
 
-    # AcroForm and cryptographic signature‐field detection
+    # Detect AcroForm & cryptographic signature fields
     has_acroform = "/AcroForm" in reader.trailer["/Root"]
     has_signature_field = False
     if has_acroform:
@@ -35,7 +34,7 @@ def extract_metadata(file_path: str, file_bytes: bytes) -> dict:
             except Exception:
                 continue
 
-    # Signature‐overlay detection: scan for /Stamp annotations
+    # Detect visible signature overlays (/Stamp annotations)
     signature_overlay_detected = False
     for page in reader.pages:
         annots = page.get("/Annots", [])
@@ -50,7 +49,7 @@ def extract_metadata(file_path: str, file_bytes: bytes) -> dict:
         if signature_overlay_detected:
             break
 
-    # Core metadata fields
+    # Core metadata
     producer      = info.get("/Producer")
     creation_date = info.get("/CreationDate")
     mod_date      = info.get("/ModDate")
@@ -64,7 +63,7 @@ def extract_metadata(file_path: str, file_bytes: bytes) -> dict:
 
     return {
         "producer": producer,
-        "toolkit": producer,                       # reuse Producer as PDF Library
+        "toolkit": producer,
         "xmp_toolkit": xmp_toolkit,
         "creation_date": creation_date,
         "mod_date": mod_date,
