@@ -1,138 +1,94 @@
 import streamlit as st
 import os
 import tempfile
-import shutil
 import hashlib
+import shutil
+import zipfile
+import base64
 from pdf_utils import extract_metadata
-from scoring_engine import score_documents
 from affidavit_writer import generate_affidavit
-from report_logger import init_report_csv, append_report_row
-from zip_exporter import create_zip_bundle
 
 st.set_page_config(page_title="Acroform Informer", layout="wide")
 
-# Minimalist UI
-st.markdown("""
-    <style>
-    body { color: #EEE; background-color: #111; }
-    .stTextInput > div > div > input {
-        background-color: #222;
-        color: #EEE;
-    }
-    .stDownloadButton > button {
-        background-color: #444;
-        color: white;
-    }
-    </style>
-""", unsafe_allow_html=True)
-
 st.title("Acroform Informer")
-st.subheader("Forensic PDF Comparison and Affidavit Generator")
+st.markdown("Upload 2 or more PDF files for analysis.")
 
-uploaded_files = st.file_uploader("Upload 2 or more PDF files for analysis", type="pdf", accept_multiple_files=True)
+uploaded_files = st.file_uploader(
+    "Select PDF files", type="pdf", accept_multiple_files=True
+)
 
-if not uploaded_files or len(uploaded_files) < 2:
-    st.warning("Please upload at least 2 PDF files.")
-    st.stop()
+if uploaded_files and len(uploaded_files) >= 2:
+    with st.spinner("Processing uploaded PDFs..."):
+        temp_dir = tempfile.mkdtemp(dir="/tmp")
+        file_map = {}
+        file_hashes = {}
+        metadata_map = {}
 
-with st.spinner("Processing uploaded files..."):
-    temp_dir = tempfile.mkdtemp(dir="/tmp")
-    file_map = {}
+        for uploaded in uploaded_files:
+            fname = uploaded.name
+            file_path = os.path.join(temp_dir, fname)
+            file_bytes = uploaded.read()
 
-    for uploaded in uploaded_files:
-        file_path = os.path.join(temp_dir, uploaded.name)
-        file_bytes = uploaded.read()
-
-        with open(file_path, "wb") as f:
-            f.write(file_bytes)
-
-        file_map[uploaded.name] = {
-            "path": file_path,
-            "bytes": file_bytes
-        }
-
-    metadata = {}
-    st.subheader("📄 Extracted Metadata + Hashes")
-
-    for fname, data in file_map.items():
-        try:
-            meta = extract_metadata(data["path"], data["bytes"])
-            sha256 = hashlib.sha256(data["bytes"]).hexdigest()
-            meta["sha256"] = sha256
-            metadata[fname] = meta
-
-            st.markdown(f"**{fname}**")
-            st.text(f"SHA-256: {sha256}")
-            st.json(meta)
-
-        except Exception as e:
-            st.error(f"Metadata extraction failed for {fname}: {str(e)}")
-
-    if not metadata:
-        st.error("No valid metadata found in any file.")
-        st.stop()
-
-    report_csv = os.path.join(temp_dir, "comparison_report.csv")
-    affidavit_dir = os.path.join(temp_dir, "affidavits")
-    os.makedirs(affidavit_dir, exist_ok=True)
-    init_report_csv(report_csv)
-
-    st.subheader("🔍 Document Match Summary")
-    st.markdown("Pairs with suspicious similarity will generate downloadable affidavits.")
-
-    summary_rows = []
-    affidavit_files = []
-
-    names = list(metadata.keys())
-    for i in range(len(names)):
-        for j in range(i + 1, len(names)):
-            f1, f2 = names[i], names[j]
-            meta1, meta2 = metadata[f1], metadata[f2]
-
-            try:
-                score, reasons = score_documents(meta1, meta2)
-            except Exception as e:
-                st.error(f"Error comparing {f1} vs {f2}: {str(e)}")
+            if len(file_bytes) < 1000:
+                st.warning(f"{fname} appears to be too small. Skipping.")
                 continue
 
-            if score > 50:
-                aff_name = f"{f1.replace('.pdf', '')}__{f2.replace('.pdf', '')}.pdf"
-                aff_path = os.path.join(affidavit_dir, aff_name)
+            with open(file_path, "wb") as f:
+                f.write(file_bytes)
 
-                generate_affidavit(meta1, meta2, score, reasons, aff_path)
-                append_report_row(report_csv, f1, f2, score, reasons)
-                affidavit_files.append((aff_name, aff_path))
+            file_map[fname] = file_path
+            file_hashes[fname] = hashlib.sha256(file_bytes).hexdigest()
 
-                summary_rows.append((f1, f2, score, reasons))
+            try:
+                metadata = extract_metadata(file_path, file_bytes)
+                metadata_map[fname] = metadata
+            except Exception as e:
+                st.error(f"Failed to extract metadata from {fname}: {e}")
 
-    if summary_rows:
-        for f1, f2, score, reasons in summary_rows:
-            st.markdown(f"**{f1} ⇄ {f2}** — Risk Score: `{score}`")
-            for r in reasons:
-                st.markdown(f"- {r}")
+        # Compare metadata
+        report_html, risk_score = generate_affidavit(metadata_map, file_hashes)
 
-        st.subheader("📄 Download Individual Affidavits")
-        for fname, fpath in affidavit_files:
-            with open(fpath, "rb") as aff:
-                st.download_button(
-                    label=f"Download Affidavit: {fname}",
-                    data=aff,
-                    file_name=fname,
-                    mime="application/pdf"
-                )
-    else:
-        st.info("✅ No suspicious matches detected.")
+        # Save affidavit
+        affidavit_path = os.path.join(temp_dir, "affidavit_report.pdf")
+        with open(affidavit_path, "wb") as f:
+            f.write(report_html)
 
-    # Bundle all
-    zip_path = os.path.join(temp_dir, "evidence_bundle.zip")
-    create_zip_bundle(affidavit_dir, report_csv, zip_path)
+        # Zip everything
+        zip_path = os.path.join(temp_dir, "acroinformer_output.zip")
+        with zipfile.ZipFile(zip_path, "w") as zipf:
+            for f in file_map.values():
+                zipf.write(f, os.path.basename(f))
+            zipf.write(affidavit_path, "affidavit_report.pdf")
 
-    with open(zip_path, "rb") as zipfile:
-        st.download_button(
-            label="📦 Download Full Evidence Bundle (ZIP)",
-            data=zipfile,
-            file_name="evidence_bundle.zip",
-            mime="application/zip"
-        )
+        with open(zip_path, "rb") as f:
+            st.download_button(
+                label="📦 Download ZIP Bundle",
+                data=f,
+                file_name="acroinformer_output.zip",
+                mime="application/zip",
+            )
 
-shutil.rmtree(temp_dir)
+        # SHA-256 and Preview
+        st.markdown("### 📄 Preview Uploaded PDFs")
+
+        for fname, fpath in file_map.items():
+            sha256 = file_hashes.get(fname, "N/A")
+            with open(fpath, "rb") as f:
+                pdf_bytes = f.read()
+                b64_pdf = base64.b64encode(pdf_bytes).decode("utf-8")
+
+            st.markdown(
+                f"""
+                <div style="border:1px solid #999;padding:8px;margin-bottom:12px;">
+                    <strong>{fname}</strong><br>
+                    <span title="SHA-256: {sha256}" style="font-size:0.9em;color:#666;">
+                        Hover to view SHA-256 hash
+                    </span><br>
+                    <iframe src="data:application/pdf;base64,{b64_pdf}" width="100%" height="500px" style="border:none;"></iframe>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+else:
+    st.warning("Please upload at least 2 PDF files for analysis.")
