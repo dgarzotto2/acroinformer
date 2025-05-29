@@ -3,66 +3,66 @@
 from reportlab.lib.pagesizes import LETTER
 from reportlab.pdfgen import canvas
 from datetime import datetime
-import os
 
-def generate_affidavit(meta_a, meta_b, score, reasons, output_path):
+def generate_affidavit(meta1, meta2, score, reasons, output_path):
     c = canvas.Canvas(output_path, pagesize=LETTER)
     width, height = LETTER
-    line = height - 50
-    indent = 50
+    margin = 50
+    line_height = 14
+    y = height - margin
 
-    def write_line(text, offset=15):
-        nonlocal line
-        c.drawString(indent, line, text)
-        line -= offset
-
-    # Title and cert
+    # Header
     c.setFont("Helvetica-Bold", 14)
-    write_line("Forensic Affidavit: PDF Document Comparison")
+    c.drawString(margin, y, "Forensic PDF Affidavit")
+    y -= 2 * line_height
+
+    # Timestamp
     c.setFont("Helvetica", 10)
-    write_line(f"Generated: {datetime.utcnow().isoformat()} UTC")
+    c.drawString(margin, y, f"Generated on: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}")
+    y -= 2 * line_height
 
-    write_line("Certified by Mile2 Investigations")
-    write_line("Prepared by David Garzotto, Founder, Forensix, LLC")
-    write_line("This report was produced using best forensic practices to the best of my ability.")
-    write_line("This report conforms to methods consistent with Swigdoc standards.")
-
-    # Document A
-    write_line("")
+    # Document 1
     c.setFont("Helvetica-Bold", 12)
-    write_line("Document A Metadata")
+    c.drawString(margin, y, "Document 1:")
+    y -= line_height
     c.setFont("Helvetica", 10)
-    for k in ['filename', 'sha256', 'creation_date', 'xmp_document_id', 'xmp_instance_id']:
-        write_line(f"{k}: {meta_a.get(k, 'N/A')}")
+    for key, val in meta1.items():
+        c.drawString(margin + 20, y, f"{key}: {val}")
+        y -= line_height
 
-    # Document B
-    write_line("")
+    y -= line_height
+
+    # Document 2
     c.setFont("Helvetica-Bold", 12)
-    write_line("Document B Metadata")
+    c.drawString(margin, y, "Document 2:")
+    y -= line_height
     c.setFont("Helvetica", 10)
-    for k in ['filename', 'sha256', 'creation_date', 'xmp_document_id', 'xmp_instance_id']:
-        write_line(f"{k}: {meta_b.get(k, 'N/A')}")
+    for key, val in meta2.items():
+        c.drawString(margin + 20, y, f"{key}: {val}")
+        y -= line_height
 
-    # Score and reasoning
-    write_line("")
+    y -= 2 * line_height
+
+    # Score & Reasons
     c.setFont("Helvetica-Bold", 12)
-    write_line("Forensic Match Score")
+    c.drawString(margin, y, f"Suspicion Score: {score}")
+    y -= 2 * line_height
     c.setFont("Helvetica", 10)
-    write_line(f"Score: {score} / 100")
-    write_line(f"Flagged as suspicious: {'YES' if score > 50 else 'NO'}")
+    c.drawString(margin, y, "Reasons for Flagging:")
+    y -= line_height
 
-    write_line("")
-    c.setFont("Helvetica-Bold", 12)
-    write_line("Indicators of Similarity or Tampering")
-    c.setFont("Helvetica", 10)
-    if reasons:
-        for r in reasons:
-            write_line(f"- {r}", offset=13)
-    else:
-        write_line("No overlapping metadata or known match indicators detected.")
+    for reason in reasons:
+        c.drawString(margin + 20, y, f"- {reason}")
+        y -= line_height
+        if y < margin + 50:
+            c.showPage()
+            y = height - margin
 
-    write_line("")
-    c.setFont("Helvetica", 8)
-    write_line("This affidavit is automatically generated for forensic comparison purposes.")
+    y -= 2 * line_height
 
+    # Certification
+    c.setFont("Helvetica-Oblique", 10)
+    c.drawString(margin, y, "This analysis was conducted using forensic best practices and automation tools designed for evidentiary use.")
+    y -= line_height
+    c.drawString(margin, y, "Certified by Forensix, LLC")
     c.save()
