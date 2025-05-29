@@ -1,89 +1,92 @@
-# metadata.py
-
 import fitz  # PyMuPDF
+import hashlib
+import os
 from PyPDF2 import PdfReader
-from typing import Dict
-from pdf_license_fingerprint import detect_pdf_license_fingerprint
+from collections import defaultdict
 
+def compute_sha256(file_path):
+    with open(file_path, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
 
-def extract_metadata(file_path: str) -> Dict:
-    result = {
-        "metadata": {},
-        "flags": [],
-        "notes": [],
-        "xfa_present": False,
-        "cid_font_detected": False,
-        "byte_range_mismatch": False,
-        "pdf_license_risk": "None",
-        "licensing_flags": []
+def extract_basic_metadata(pdf_path):
+    reader = PdfReader(pdf_path)
+    metadata = reader.metadata or {}
+    doc_id = reader.trailer.get("/ID", [None])[0]
+    return {
+        "title": metadata.get("/Title"),
+        "author": metadata.get("/Author"),
+        "producer": metadata.get("/Producer"),
+        "creator": metadata.get("/Creator"),
+        "creation_date": metadata.get("/CreationDate"),
+        "mod_date": metadata.get("/ModDate"),
+        "doc_id": doc_id,
+        "custom_uuid": metadata.get("/UUID"),
     }
 
+def extract_entities_and_fonts(pdf_path):
+    entities = {"grantors": set(), "grantees": set()}
+    cid_fonts_used = False
+    reader = PdfReader(pdf_path)
+    for page in reader.pages:
+        try:
+            fonts = page.get("/Resources", {}).get("/Font", {})
+            for font in fonts.values():
+                font_obj = font.get_object()
+                base_font = font_obj.get("/BaseFont", "")
+                subtype = font_obj.get("/Subtype", "")
+                if "CID" in subtype or "CID" in base_font:
+                    cid_fonts_used = True
+        except Exception:
+            continue
+    # Simple name matching example
+    text = ""
     try:
-        # Load basic metadata with PyMuPDF
-        doc = fitz.open(file_path)
-        result["metadata"] = doc.metadata or {}
+        doc = fitz.open(pdf_path)
+        for page in doc:
+            text += page.get_text()
+        doc.close()
+        if "grantor" in text.lower():
+            entities["grantors"].add("Detected")
+        if "grantee" in text.lower():
+            entities["grantees"].add("Detected")
+    except Exception:
+        pass
+    return entities, cid_fonts_used
 
-        # CID font detection (manual scan)
-        try:
-            for page in doc:
-                font_list = page.get_fonts(full=True)
-                for font in font_list:
-                    if "/CIDFont" in str(font):
-                        result["cid_font_detected"] = True
-                        result["flags"].append("CID font encoding detected")
-                        result["notes"].append("Font uses /CIDFont – possible glyph suppression")
-                        break
-                if result["cid_font_detected"]:
-                    break
-        except Exception as e:
-            result["notes"].append(f"Font parsing error: {e}")
+def analyze_batch(pdf_paths):
+    seen = defaultdict(set)
+    results = []
 
-    except Exception as e:
-        result["notes"].append(f"Error loading with PyMuPDF: {e}")
+    for path in pdf_paths:
+        result = {}
+        sha256 = compute_sha256(path)
+        result["filename"] = os.path.basename(path)
+        result["sha256"] = sha256
+        meta = extract_basic_metadata(path)
+        entities, cid_flag = extract_entities_and_fonts(path)
 
-    # Supplement with PyPDF2
-    try:
-        reader = PdfReader(file_path)
+        result.update(meta)
+        result["cid_font"] = cid_flag
+        result["entities"] = entities
+        result["fraud_flags"] = []
 
-        # ByteRange mismatch
-        try:
-            b_range = reader.trailer.get("/ByteRange", None)
-            if b_range and hasattr(b_range, "get_object"):
-                b_range = b_range.get_object()
-            if isinstance(b_range, list) and len(b_range) > 4:
-                result["byte_range_mismatch"] = True
-                result["flags"].append("ByteRange longer than expected")
-                result["notes"].append("Suspicious ByteRange length – may indicate tampering")
-        except Exception as e:
-            result["notes"].append(f"ByteRange error: {e}")
+        # Cross-file duplication detection
+        for field in ["title", "author", "producer", "creator", "creation_date", "doc_id", "custom_uuid"]:
+            value = meta.get(field)
+            if value and value in seen[field]:
+                result["fraud_flags"].append(f"Duplicate {field}: {value}")
+            if value:
+                seen[field].add(value)
 
-        # Check for XFA (XML Forms Architecture) overlays
-        try:
-            if "/XFA" in str(reader.trailer):
-                result["xfa_present"] = True
-                result["flags"].append("XFA detected")
-                result["notes"].append("XFA form structure detected – possible flattening layer")
-        except Exception as e:
-            result["notes"].append(f"XFA detection error: {e}")
+        for role in ["grantors", "grantees"]:
+            for entity in entities[role]:
+                if entity in seen[role]:
+                    result["fraud_flags"].append(f"Repeated entity: {role[:-1]} {entity}")
+                seen[role].add(entity)
 
-        # Extract full metadata dict
-        pdf_info = {}
-        try:
-            if reader.metadata:
-                for key, value in reader.metadata.items():
-                    clean_key = key.replace("/", "")
-                    pdf_info[clean_key] = str(value)
-                result["metadata"].update(pdf_info)
-        except Exception as e:
-            result["notes"].append(f"Metadata parse error: {e}")
+        if cid_flag:
+            result["fraud_flags"].append("CID font detected")
 
-        # Detect AGPL/GPL licensed PDF generators
-        license_info = detect_pdf_license_fingerprint(result["metadata"])
-        if license_info["licensing_flag"]:
-            result["licensing_flags"].append(license_info["licensing_flag"])
-            result["pdf_license_risk"] = license_info["license_type"]
+        results.append(result)
 
-    except Exception as e:
-        result["notes"].append(f"PyPDF2 load error: {e}")
-
-    return result
+    return results
