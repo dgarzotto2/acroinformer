@@ -1,68 +1,56 @@
 # pdf_utils.py
 
 import fitz  # PyMuPDF
-import hashlib
 from PyPDF2 import PdfReader
-from datetime import datetime
+from lxml import etree
+import hashlib
 
-def extract_metadata(file_path):
-    meta = {
-        "creation_time": None,
-        "modification_time": None,
-        "xmp_document_id": None,
-        "xmp_instance_id": None,
-        "acroform_fields": [],
-        "producer": None,
-        "title": None,
-        "author": None
-    }
-
+def extract_metadata(pdf_path):
+    """
+    Extracts metadata including XMP DocumentID, InstanceID, Producer, CreationDate,
+    and any AcroForm field keys from the PDF.
+    """
+    metadata = {}
     try:
-        reader = PdfReader(file_path)
-        doc_info = reader.metadata
+        reader = PdfReader(pdf_path)
 
-        meta["producer"] = doc_info.get('/Producer')
-        meta["title"] = doc_info.get('/Title')
-        meta["author"] = doc_info.get('/Author')
+        # PDF core metadata
+        core = reader.metadata
+        metadata["producer"] = core.get("/Producer", "")
+        metadata["creation_date"] = core.get("/CreationDate", "").replace("D:", "")
 
         # AcroForm fields
-        if reader.trailer.get("/Root"):
-            acro_form = reader.trailer["/Root"].get("/AcroForm")
-            if acro_form and "/Fields" in acro_form:
-                fields = acro_form["/Fields"]
-                meta["acroform_fields"] = [str(f.get_object()) for f in fields]
+        metadata["acroform_fields"] = []
+        if "/AcroForm" in reader.trailer["/Root"]:
+            form = reader.trailer["/Root"]["/AcroForm"]
+            fields = form.get("/Fields", [])
+            for f in fields:
+                try:
+                    obj = f.get_object()
+                    if "/T" in obj:
+                        metadata["acroform_fields"].append(obj["/T"])
+                except Exception:
+                    continue
 
-        # Dates
-        creation_date = doc_info.get('/CreationDate')
-        mod_date = doc_info.get('/ModDate')
-        if creation_date:
-            meta["creation_time"] = parse_pdf_date(creation_date)
-        if mod_date:
-            meta["modification_time"] = parse_pdf_date(mod_date)
+        # XMP metadata (DocumentID and InstanceID)
+        metadata["xmp:DocumentID"] = ""
+        metadata["xmp:InstanceID"] = ""
+        for page in reader.pages:
+            if "/Metadata" in page:
+                try:
+                    xmp_raw = page["/Metadata"].get_data()
+                    xml = etree.fromstring(xmp_raw)
+                    for el in xml.iter():
+                        tag = el.tag.lower()
+                        if "documentid" in tag:
+                            metadata["xmp:DocumentID"] = el.text
+                        if "instanceid" in tag:
+                            metadata["xmp:InstanceID"] = el.text
+                except Exception:
+                    continue
+            break  # XMP found only once, usually on the first page
 
-        # XMP metadata via PyMuPDF
-        with fitz.open(file_path) as doc:
-            xmp = doc.metadata
-            meta["xmp_document_id"] = xmp.get("xmp:DocumentID")
-            meta["xmp_instance_id"] = xmp.get("xmp:InstanceID")
+        return metadata
 
     except Exception as e:
-        meta["error"] = f"Metadata extraction failed: {str(e)}"
-
-    return meta
-
-def parse_pdf_date(d):
-    try:
-        if d.startswith("D:"):
-            d = d[2:]
-        return datetime.strptime(d[:14], "%Y%m%d%H%M%S").isoformat()
-    except Exception:
-        return d  # Fallback raw string
-
-def compute_sha256(file_path):
-    try:
-        with open(file_path, "rb") as f:
-            return hashlib.sha256(f.read()).hexdigest()
-    except Exception:
-        return None
-        
+        return {"error": str(e)}
