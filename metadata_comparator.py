@@ -1,82 +1,80 @@
+import fitz  # PyMuPDF
 import hashlib
+import re
+import datetime
 
-def compare_metadata(pdf_reports):
-    comparison_results = {
-        "shared_ids": [],
-        "timestamp_clones": [],
-        "toolkit_matches": [],
-        "hash_collisions": [],
-        "warnings": []
+def extract_metadata(file_path: str) -> dict:
+    result = {
+        "filename": file_path.split("/")[-1],
+        "sha256": "",
+        "producer": None,
+        "creator": None,
+        "creation_date": None,
+        "mod_date": None,
+        "xmp_toolkit": None,
+        "instance_id": None,
+        "document_id": None,
+        "metadata_flags": [],
+        "raw_xmp": "",
     }
 
-    seen_doc_ids = {}
-    seen_instance_ids = {}
-    seen_creation_dates = {}
-    seen_mod_dates = {}
-    seen_toolkits = {}
+    try:
+        with open(file_path, "rb") as f:
+            file_bytes = f.read()
+            result["sha256"] = hashlib.sha256(file_bytes).hexdigest()
 
-    for report in pdf_reports:
-        filename = report.get("filename", "Unknown")
-        meta = report.get("metadata", {})
+        doc = fitz.open(file_path)
+        meta = doc.metadata
 
-        # Normalize
-        doc_id = meta.get("xmpMM:DocumentID", "").strip()
-        inst_id = meta.get("xmpMM:InstanceID", "").strip()
-        cdate = meta.get("CreationDate", "").strip()
-        mdate = meta.get("ModDate", "").strip()
-        toolkit = meta.get("xmp:Toolkit", "").strip()
-        creator_tool = meta.get("xmp:CreatorTool", "").strip()
-        sha = report.get("sha256", "")
+        result["producer"] = meta.get("producer")
+        result["creator"] = meta.get("creator")
+        result["creation_date"] = meta.get("creationDate")
+        result["mod_date"] = meta.get("modDate")
 
-        # DocumentID checks
-        if doc_id:
-            if doc_id in seen_doc_ids:
-                comparison_results["shared_ids"].append((doc_id, seen_doc_ids[doc_id], filename))
+        # Search for embedded XMP packet
+        raw = file_bytes.decode(errors="ignore")
+        xmp_match = re.search(r"<x:xmpmeta[\s\S]+?</x:xmpmeta>", raw)
+        if xmp_match:
+            xmp = xmp_match.group(0)
+            result["raw_xmp"] = xmp
+
+            # Extract common forensic markers
+            toolkit_match = re.search(r"<xmp:Toolkit>([^<]+)</xmp:Toolkit>", xmp)
+            if toolkit_match:
+                result["xmp_toolkit"] = toolkit_match.group(1)
+
+            iid_match = re.search(r"<xmpMM:InstanceID>[^:]+:([^<]+)</xmpMM:InstanceID>", xmp)
+            if iid_match:
+                result["instance_id"] = iid_match.group(1)
+
+            docid_match = re.search(r"<xmpMM:DocumentID>[^:]+:([^<]+)</xmpMM:DocumentID>", xmp)
+            if docid_match:
+                result["document_id"] = docid_match.group(1)
+
+            # Heuristic checks
+            if result["instance_id"] == result["document_id"]:
+                result["metadata_flags"].append("Single-use ID – no regeneration detected")
+            elif result["instance_id"] and result["document_id"]:
+                result["metadata_flags"].append("InstanceID ≠ DocumentID – reuse or flattening suspected")
+
+            if result["xmp_toolkit"] and "Adobe" not in result["xmp_toolkit"]:
+                result["metadata_flags"].append("Non-Adobe XMP toolkit – synthetic or 3rd-party generation")
+
+        # Check for timestamp match
+        if result["creation_date"] and result["mod_date"]:
+            if result["creation_date"] == result["mod_date"]:
+                result["metadata_flags"].append("Creation and modification dates are identical – likely mass-produced")
             else:
-                seen_doc_ids[doc_id] = filename
+                # Check modification after creation
+                try:
+                    created = datetime.datetime.strptime(result["creation_date"][2:16], "%Y%m%d%H%M%S")
+                    modified = datetime.datetime.strptime(result["mod_date"][2:16], "%Y%m%d%H%M%S")
+                    if modified < created:
+                        result["metadata_flags"].append("Modification date precedes creation date – metadata spoofing")
+                except Exception:
+                    pass
 
-        # InstanceID checks
-        if inst_id:
-            if inst_id in seen_instance_ids:
-                comparison_results["shared_ids"].append((inst_id, seen_instance_ids[inst_id], filename))
-            else:
-                seen_instance_ids[inst_id] = filename
+    except Exception as e:
+        result["metadata_flags"].append(f"Metadata extraction failed: {str(e)}")
 
-        # Timestamp checks
-        if cdate:
-            if cdate in seen_creation_dates:
-                comparison_results["timestamp_clones"].append((cdate, seen_creation_dates[cdate], filename))
-            else:
-                seen_creation_dates[cdate] = filename
-
-        if mdate:
-            if mdate in seen_mod_dates:
-                comparison_results["timestamp_clones"].append((mdate, seen_mod_dates[mdate], filename))
-            else:
-                seen_mod_dates[mdate] = filename
-
-        # Toolkit checks
-        if toolkit or creator_tool:
-            key = (toolkit, creator_tool)
-            if key in seen_toolkits:
-                comparison_results["toolkit_matches"].append((key, seen_toolkits[key], filename))
-            else:
-                seen_toolkits[key] = filename
-
-    # Hash collision check
-    hashes = {}
-    for report in pdf_reports:
-        sha = report.get("sha256", "")
-        fname = report.get("filename", "")
-        if sha in hashes:
-            comparison_results["hash_collisions"].append((sha, hashes[sha], fname))
-        else:
-            hashes[sha] = fname
-
-    # Warnings
-    if not comparison_results["shared_ids"] and not comparison_results["timestamp_clones"]:
-        comparison_results["warnings"].append("No forensic indicators of duplication found.")
-    else:
-        comparison_results["warnings"].append("⚠️ Multiple signs of reused identifiers or cloned timestamps.")
-
-    return comparison_results
+    return result
