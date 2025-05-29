@@ -1,35 +1,70 @@
-# utils/entity_extraction.py
-
 import re
+from utils.patterns import (
+    phone_pattern, email_pattern, amount_pattern,
+    registry_key_pattern, address_pattern, foreign_script_pattern
+)
 
-def extract_entities(text: str) -> list:
+def extract_entities(text, cid_context=None, ascii85_context=None, ocr_context=None):
     """
-    Extract key forensic entities from text.
+    Extracts entities such as phone numbers, emails, registry keys, addresses, amounts, and foreign scripts.
+    Disambiguates registry keys from misclassified phone numbers using context.
     """
-    entities = []
 
-    registry_keys = re.findall(r"\b0\d{9}\b", text)
-    for key in registry_keys:
-        entities.append(f"Registry Key: {key}")
+    entities = {
+        "phones": [],
+        "emails": [],
+        "amounts": [],
+        "addresses": [],
+        "registry_keys": [],
+        "foreign_scripts": [],
+        "raw_blocks": [],
+    }
 
-    amounts = re.findall(r"\$\d{1,3}(?:,\d{3})*(?:\.\d{2})?", text)
-    for amt in amounts:
-        entities.append(f"Amount: {amt}")
+    # Capture raw text blocks for traceback if needed
+    entities["raw_blocks"].append(text)
 
-    parcels = re.findall(r"\b[39]\d{2}-\d{3}-\d{3}\b", text)
-    for parcel in parcels:
-        entities.append(f"Parcel: {parcel}")
+    # Primary extraction patterns
+    phones = re.findall(phone_pattern, text)
+    emails = re.findall(email_pattern, text)
+    amounts = re.findall(amount_pattern, text)
+    registry_keys = re.findall(registry_key_pattern, text)
+    addresses = re.findall(address_pattern, text)
 
-    emails = re.findall(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", text)
-    for email in emails:
-        entities.append(f"Email: {email}")
+    # Disambiguate potential misclassified registry keys as phone numbers
+    cleaned_phones = []
+    inferred_keys = set(registry_keys)
+    for p in phones:
+        digits = re.sub(r"[^\d]", "", p)
+        if len(digits) == 10 and digits.startswith(("00", "01", "05", "06", "07", "09")):
+            if digits not in inferred_keys:
+                inferred_keys.add(digits)
+        else:
+            cleaned_phones.append(p)
 
-    phones = re.findall(r"\(?\d{3}\)?[-\s.]?\d{3}[-\s.]?\d{4}", text)
-    for phone in phones:
-        entities.append(f"Phone: {phone}")
+    # Capture registry keys from phone-like patterns
+    deduped_keys = list(sorted(inferred_keys))
 
-    addresses = re.findall(r"\d{2,5} [A-Za-z0-9 .,-]+(?:St|Ave|Blvd|Rd|Highway|Hwy|Way|Lane|Dr)\b", text)
-    for addr in addresses:
-        entities.append(f"Address: {addr}")
+    # Foreign script detection
+    foreign_hits = []
+    for match in foreign_script_pattern.finditer(text):
+        foreign_hits.append({
+            "language": match.lastgroup,
+            "text": match.group()
+        })
 
-    return list(set(entities))
+    # CID / ASCII85 / OCR contexts
+    if cid_context:
+        entities["cid_context"] = cid_context
+    if ascii85_context:
+        entities["ascii85_context"] = ascii85_context
+    if ocr_context:
+        entities["ocr_context"] = ocr_context
+
+    entities["phones"] = cleaned_phones
+    entities["emails"] = list(set(emails))
+    entities["amounts"] = list(set(amounts))
+    entities["addresses"] = list(set(addresses))
+    entities["registry_keys"] = deduped_keys
+    entities["foreign_scripts"] = foreign_hits
+
+    return entities
