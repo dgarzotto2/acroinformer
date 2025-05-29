@@ -3,7 +3,7 @@
 import re
 import zlib
 import logging
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 from PyPDF2 import PdfReader
 from utils.xml_utils import parse_xmp_toolkit
 
@@ -30,78 +30,78 @@ def _find_known_libs(raw: bytes) -> bool:
             continue
     return False
 
+def _resolve(obj: Any) -> Any:
+    """
+    Recursively dereference a PyPDF2 IndirectObject (or list of them)
+    into plain Python dicts/lists. Returns {} for anything missing.
+    """
+    try:
+        # Handle a single IndirectObject
+        if hasattr(obj, "get_object"):
+            return _resolve(obj.get_object())
+    except Exception:
+        return {}
+    # Handle lists of objects
+    if isinstance(obj, list):
+        return [_resolve(o) for o in obj]
+    # Fallback to obj itself
+    return obj or {}
+
 def extract_metadata(file_path: str, file_bytes: bytes) -> Dict[str, Any]:
     """
-    Extract PDF metadata and forensic flags, with proper IndirectObject dereferencing.
+    Extract forensic PDF metadata with safe dereferencing of all indirect objects.
     """
     reader = PdfReader(file_path)
-    info     = reader.metadata or {}
-    raw_xmp  = reader.xmp_metadata or b""
+    info = reader.metadata or {}
+    raw_xmp = reader.xmp_metadata or b""
 
-    # DocumentID
+    # 1) DocumentID
     docid: Optional[str] = None
     try:
-        id_arr = reader.trailer.get("/ID")
-        if isinstance(id_arr, list) and id_arr:
-            docid = id_arr[0]
+        ids = reader.trailer.get("/ID")
+        if isinstance(ids, list) and ids:
+            docid = ids[0]
     except Exception:
         pass
 
-    # XMP Toolkit
+    # 2) XMP toolkit
     try:
         xmp_toolkit = parse_xmp_toolkit(raw_xmp)
     except Exception:
         xmp_toolkit = None
 
-    # Dereference /Root
-    root_obj = reader.trailer.get("/Root")
-    try:
-        root = root_obj.get_object() if hasattr(root_obj, "get_object") else root_obj or {}
-    except Exception:
-        root = {}
+    # 3) Root dictionary
+    root = _resolve(reader.trailer.get("/Root"))
 
-    # Detect AcroForm & signature fields
-    has_acroform = False
+    # 4) AcroForm & signature-field
+    acro = _resolve(root.get("/AcroForm"))
+    has_acroform = bool(acro)
     has_sigfield = False
-    acro_dict: Dict = {}
-    if "/AcroForm" in root:
-        has_acroform = True
-        af = root.get("/AcroForm")
-        try:
-            acro_dict = af.get_object() if hasattr(af, "get_object") else af or {}
-        except Exception:
-            acro_dict = {}
-        for fld in acro_dict.get("/Fields", []) or []:
-            try:
-                fobj = fld.get_object() if hasattr(fld, "get_object") else fld
-                if fobj.get("/FT") == "/Sig":
-                    has_sigfield = True
-                    break
-            except Exception:
-                continue
+    for fld in acro.get("/Fields", []) or []:
+        fobj = _resolve(fld)
+        if fobj.get("/FT") == "/Sig":
+            has_sigfield = True
+            break
 
-    # Signature-overlay (/Stamp or /AP)
+    # 5) Signature-overlay detection
     signature_overlay = False
     for page in reader.pages:
-        annots = page.get("/Annots", []) or []
+        annots = _resolve(page.get("/Annots")) or []
         for annot in annots:
-            try:
-                aobj = annot.get_object() if hasattr(annot, "get_object") else annot
-                if aobj.get("/Subtype") in ("/Stamp", "/Sig") or aobj.get("/AP"):
-                    signature_overlay = True
-                    break
-            except Exception:
-                continue
+            aobj = _resolve(annot)
+            if aobj.get("/Subtype") in ("/Stamp", "/Sig") or aobj.get("/AP"):
+                signature_overlay = True
+                break
         if signature_overlay:
             break
 
-    # Core metadata
+    # 6) Core metadata fields
     producer      = info.get("/Producer")
     creator       = info.get("/Creator")
     creation_date = info.get("/CreationDate")
     mod_date      = info.get("/ModDate")
 
-    # Hidden PDF-library usage
+    # 7) Hidden-library usage
     hidden_lib_usage = _find_known_libs(file_bytes)
 
     return {
