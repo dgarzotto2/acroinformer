@@ -47,7 +47,6 @@ def process_file(pdf_path, output_dir):
         signature = validate_signature(pdf_path)
         license_flags = check_pdf_license(pdf_path)
 
-        # Combine all results
         combined = {**metadata, **decoded, **entities, **signature, **license_flags}
         base_name = os.path.splitext(filename)[0]
 
@@ -76,8 +75,8 @@ def process_file(pdf_path, output_dir):
     return result
 
 def main():
-    st.title("X-Ray PDF – Batch Forensic Document Scanner")
-    uploaded_files = st.file_uploader("Upload PDFs or ZIP archive", type=["pdf", "zip"], accept_multiple_files=True)
+    st.title("X-Ray PDF Forensic Scanner")
+    uploaded_files = st.file_uploader("Upload PDFs or a ZIP archive", type=["pdf", "zip"], accept_multiple_files=True)
 
     if uploaded_files:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -101,23 +100,22 @@ def main():
                     result = process_file(pdf_path, output_dir)
                     results.append(result)
 
-            # Display summary
             st.success("Batch processing complete.")
             for res in results:
-                st.markdown(f"### 📄 `{res['filename']}`")
+                st.markdown(f"### {res['filename']}")
                 if res["error"]:
-                    st.error(f"❌ Error: {res['error']}")
+                    st.error(f"Error: {res['error']}")
                 else:
-                    st.markdown(f"- ✅ YAML: `{os.path.basename(res['yaml'])}`")
-                    st.markdown(f"- ✅ Affidavit: `{os.path.basename(res['affidavit'])}`")
-                    st.markdown("- ✅ GPT Summary:")
+                    st.markdown(f"- YAML: `{os.path.basename(res['yaml'])}`")
+                    st.markdown(f"- Affidavit: `{os.path.basename(res['affidavit'])}`")
+                    st.markdown("- GPT Summary:")
                     st.code(res["gpt_summary"] or "N/A", language="markdown")
 
             # Bundle ZIP
             zip_path = os.path.join(temp_dir, "evidence_bundle.zip")
             bundle_evidence_outputs(output_dir, zip_path)
             with open(zip_path, "rb") as f:
-                st.download_button("📥 Download Full ZIP Bundle", f, file_name="evidence_bundle.zip")
+                st.download_button("Download Full ZIP Bundle", f, file_name="evidence_bundle.zip")
 
 if __name__ == "__main__":
     main()
