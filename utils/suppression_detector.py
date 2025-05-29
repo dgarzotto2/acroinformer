@@ -5,7 +5,7 @@ import re
 def detect_suppression_patterns(text: str) -> list:
     """
     Detects known suppression and obfuscation patterns in a text block.
-    Returns a list of flags.
+    Returns a list of suppression flags.
     """
     flags = []
 
