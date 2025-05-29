@@ -1,5 +1,3 @@
-# app.py
-
 import streamlit as st
 import os
 import tempfile
@@ -13,7 +11,6 @@ from zip_exporter import create_zip_bundle
 
 st.set_page_config(page_title="Acroform Informer", layout="wide")
 
-# Dark theme UI override
 st.markdown("""
     <style>
     body {
@@ -41,23 +38,22 @@ if uploaded_files and len(uploaded_files) >= 2:
         temp_dir = tempfile.mkdtemp(dir="/tmp")
         file_map = {}
 
+        # Save uploaded files
         for uploaded in uploaded_files:
             file_path = os.path.join(temp_dir, uploaded.name)
+            file_bytes = uploaded.read()
             with open(file_path, "wb") as f:
-                f.write(uploaded.read())
-            file_map[uploaded.name] = file_path
+                f.write(file_bytes)
+            file_map[uploaded.name] = (file_path, file_bytes)
 
-        st.success(f"{len(uploaded_files)} PDF files uploaded.")
         st.subheader("Extracted Metadata & SHA-256 Hashes")
-
         metadata = {}
-        for fname, fpath in file_map.items():
-            with open(fpath, "rb") as f:
-                file_bytes = f.read()
-                sha256 = hashlib.sha256(file_bytes).hexdigest()
-                meta = extract_metadata(fpath, file_bytes)
-                meta['sha256'] = sha256
-                metadata[fname] = meta
+
+        for fname, (fpath, fbytes) in file_map.items():
+            sha256 = hashlib.sha256(fbytes).hexdigest()
+            meta = extract_metadata(fpath, fbytes)
+            meta['sha256'] = sha256
+            metadata[fname] = meta
 
             st.markdown(f"**{fname}**")
             st.text(f"SHA-256: {sha256}")
