@@ -4,15 +4,32 @@ import streamlit as st
 import os
 import tempfile
 import shutil
+import hashlib
 from pdf_utils import extract_metadata
 from scoring_engine import score_documents
 from affidavit_writer import generate_affidavit
 from report_logger import init_report_csv, append_report_row
 from zip_exporter import create_zip_bundle
-import hashlib
-import fitz
 
 st.set_page_config(page_title="Acroform Informer", layout="wide")
+
+# Dark theme override (force style)
+st.markdown("""
+    <style>
+    body {
+        color: #DCDCDC;
+        background-color: #111111;
+    }
+    .stTextInput > div > div > input {
+        background-color: #222;
+        color: #eee;
+    }
+    .stDownloadButton > button {
+        background-color: #444;
+        color: white;
+    }
+    </style>
+""", unsafe_allow_html=True)
 
 st.title("Acroform Informer")
 st.subheader("Forensic PDF Comparison and Affidavit Generator")
@@ -20,54 +37,78 @@ st.subheader("Forensic PDF Comparison and Affidavit Generator")
 st.markdown("""
 **Purpose:**  
 This system detects and reports forensic similarities between PDF files. It generates court-ready affidavits detailing metadata matches, AcroForm reuse, and potential flattening or stealth editing.
-
-**Certification:**  
-All reports are signed by David Garzotto, Founder of Forensix, LLC  
-Certified by Mile2 Investigations
 """)
 
 uploaded_files = st.file_uploader("Upload 2 or more PDF files for analysis", type="pdf", accept_multiple_files=True)
 
 if uploaded_files and len(uploaded_files) >= 2:
-    with tempfile.TemporaryDirectory() as tmpdir:
-        st.info("Processing uploaded files...")
-        affidavits_dir = os.path.join(tmpdir, "affidavits")
-        os.makedirs(affidavits_dir, exist_ok=True)
-        report_csv = os.path.join(tmpdir, "batch_report.csv")
-        zip_output = os.path.join(tmpdir, "evidence_bundle.zip")
+    temp_dir = tempfile.mkdtemp()
+    st.success(f"{len(uploaded_files)} PDF files uploaded.")
 
-        # Parse metadata for all files
-        metadata_list = []
-        for file in uploaded_files:
-            path = os.path.join(tmpdir, file.name)
-            with open(path, "wb") as f:
-                f.write(file.getbuffer())
-            metadata = extract_metadata(path)
-            metadata["filename"] = file.name
-            metadata_list.append(metadata)
+    file_map = {}
+    for file in uploaded_files:
+        file_path = os.path.join(temp_dir, file.name)
+        with open(file_path, "wb") as f:
+            f.write(file.read())
+        file_map[file.name] = file_path
 
-        # Initialize report
-        init_report_csv(report_csv)
+    # Extract metadata and log hashes
+    st.subheader("Extracted Metadata & SHA-256 Hashes")
+    metadata = {}
+    for fname, fpath in file_map.items():
+        meta = extract_metadata(fpath)
+        with open(fpath, "rb") as f:
+            sha256 = hashlib.sha256(f.read()).hexdigest()
+        meta['sha256'] = sha256
+        metadata[fname] = meta
 
-        st.success("Metadata extracted. Comparing files...")
+        st.markdown(f"**{fname}**")
+        st.text(f"SHA-256: {sha256}")
+        st.json(meta)
 
-        # Compare all pairs
-        for i in range(len(metadata_list)):
-            for j in range(i + 1, len(metadata_list)):
-                meta_a = metadata_list[i]
-                meta_b = metadata_list[j]
-                score, reasons = score_documents(meta_a, meta_b)
-                affidavit_path = os.path.join(affidavits_dir, f"{meta_a['filename']}__{meta_b['filename']}.docx")
-                generate_affidavit(meta_a, meta_b, score, reasons, affidavit_path)
-                append_report_row(report_csv, meta_a, meta_b, score, reasons)
+    # Prepare report
+    report_csv = os.path.join(temp_dir, "batch_report.csv")
+    init_report_csv(report_csv)
 
-        # Bundle results
-        create_zip_bundle(affidavits_dir, report_csv, zip_output)
+    affidavit_dir = os.path.join(temp_dir, "affidavits")
+    os.makedirs(affidavit_dir, exist_ok=True)
 
-        st.markdown("### ✅ Batch Report & Affidavits Ready")
+    st.subheader("Suspicious Match Report & Affidavit Generation")
+    results = []
+    names = list(file_map.keys())
 
-        with open(report_csv, "rb") as f:
-            st.download_button("Download CSV Report", f, file_name="batch_report.csv", mime="text/csv")
+    for i in range(len(names)):
+        for j in range(i + 1, len(names)):
+            f1, f2 = names[i], names[j]
+            meta1, meta2 = metadata[f1], metadata[f2]
+            score, reasons = score_documents(meta1, meta2)
 
-        with open(zip_output, "rb") as f:
-            st.download_button("Download ZIP Bundle (Affidavits + Report)", f, file_name="evidence_bundle.zip", mime="application/zip")
+            if score > 50:
+                st.markdown(f"**{f1} ⇄ {f2}** — Score: {score}")
+                for reason in reasons:
+                    st.markdown(f"- {reason}")
+
+                affidavit_path = os.path.join(
+                    affidavit_dir,
+                    f"{f1.replace('.pdf', '')}__{f2.replace('.pdf', '')}.pdf"
+                )
+                generate_affidavit(meta1, meta2, score, reasons, affidavit_path)
+                append_report_row(report_csv, f1, f2, score, reasons)
+                results.append((f1, f2, score))
+
+    if not results:
+        st.info("No suspicious matches (score > 50) were detected.")
+
+    # Export ZIP
+    zip_path = os.path.join(temp_dir, "evidence_bundle.zip")
+    create_zip_bundle(affidavit_dir, report_csv, zip_path)
+
+    with open(zip_path, "rb") as f:
+        st.download_button(
+            label="📥 Download Evidence Bundle (ZIP)",
+            data=f,
+            file_name="evidence_bundle.zip",
+            mime="application/zip"
+        )
+
+    shutil.rmtree(temp_dir)
