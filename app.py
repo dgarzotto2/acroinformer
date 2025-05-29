@@ -1,8 +1,12 @@
+# app.py
+
 import streamlit as st
 import os
 import tempfile
 import shutil
 import hashlib
+import traceback
+
 from pdf_utils import extract_metadata
 from scoring_engine import score_documents
 from affidavit_writer import generate_affidavit
@@ -11,6 +15,7 @@ from zip_exporter import create_zip_bundle
 
 st.set_page_config(page_title="Acroform Informer", layout="wide")
 
+# Dark UI theme
 st.markdown("""
     <style>
     body {
@@ -29,35 +34,48 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("Acroform Informer")
-st.subheader("Forensic PDF Comparison and Affidavit Generator")
+st.subheader("Upload 2 or more PDF files for forensic analysis")
 
-uploaded_files = st.file_uploader("Upload 2 or more PDF files for analysis", type="pdf", accept_multiple_files=True)
+uploaded_files = st.file_uploader("Select PDF files", type="pdf", accept_multiple_files=True)
 
 if uploaded_files and len(uploaded_files) >= 2:
     with st.spinner("Processing uploaded PDFs..."):
         temp_dir = tempfile.mkdtemp(dir="/tmp")
         file_map = {}
+        log_entries = []
 
-        # Save uploaded files
         for uploaded in uploaded_files:
             file_path = os.path.join(temp_dir, uploaded.name)
-            file_bytes = uploaded.read()
+            fbytes = uploaded.read()
+
+            # Write to disk
             with open(file_path, "wb") as f:
-                f.write(file_bytes)
-            file_map[uploaded.name] = (file_path, file_bytes)
+                f.write(fbytes)
+            file_map[uploaded.name] = (file_path, fbytes)
 
-        st.subheader("Extracted Metadata & SHA-256 Hashes")
+        st.subheader("Extracted Metadata & SHA-256")
         metadata = {}
-
         for fname, (fpath, fbytes) in file_map.items():
-            sha256 = hashlib.sha256(fbytes).hexdigest()
-            meta = extract_metadata(fpath, fbytes)
-            meta['sha256'] = sha256
-            metadata[fname] = meta
+            try:
+                meta = extract_metadata(fpath, fbytes)
+                sha256 = hashlib.sha256(fbytes).hexdigest()
+                meta['sha256'] = sha256
 
-            st.markdown(f"**{fname}**")
-            st.text(f"SHA-256: {sha256}")
-            st.json(meta)
+                # Optional repair flags
+                meta['repair_attempted'] = False
+                meta['repair_successful'] = False
+                meta['repair_method'] = None
+
+                metadata[fname] = meta
+                st.markdown(f"**{fname}**")
+                st.text(f"SHA-256: {sha256}")
+                st.json(meta)
+
+            except Exception as e:
+                err = traceback.format_exc()
+                log_entries.append(f"[{fname}]\n{err}")
+                st.error(f"❌ Failed to extract metadata for `{fname}`")
+                continue
 
         report_csv = os.path.join(temp_dir, "batch_report.csv")
         init_report_csv(report_csv)
@@ -65,9 +83,9 @@ if uploaded_files and len(uploaded_files) >= 2:
         affidavit_dir = os.path.join(temp_dir, "affidavits")
         os.makedirs(affidavit_dir, exist_ok=True)
 
-        st.subheader("Suspicious Match Report & Affidavit Generation")
+        st.subheader("Suspicious Match Report & Affidavit Generator")
         results = []
-        names = list(file_map.keys())
+        names = list(metadata.keys())
 
         for i in range(len(names)):
             for j in range(i + 1, len(names)):
@@ -101,6 +119,20 @@ if uploaded_files and len(uploaded_files) >= 2:
                 file_name="evidence_bundle.zip",
                 mime="application/zip"
             )
+
+        # Output error log if any
+        if log_entries:
+            log_path = os.path.join(temp_dir, "error_log.txt")
+            with open(log_path, "w") as logf:
+                logf.write("\n\n".join(log_entries))
+
+            with open(log_path, "rb") as f:
+                st.download_button(
+                    label="⚠️ Download Error Log",
+                    data=f,
+                    file_name="error_log.txt",
+                    mime="text/plain"
+                )
 
         shutil.rmtree(temp_dir)
 else:
