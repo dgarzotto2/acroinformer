@@ -1,21 +1,16 @@
-import streamlit as st
 import os
-import hashlib
+import streamlit as st
 import tempfile
+import hashlib
 from extract_metadata import extract_metadata
+from gpt_fraud_summary import generate_fraud_summary
 
-# Set page configuration
-st.set_page_config(
-    page_title="AcroForm Informer",
-    layout="centered"
-)
+st.set_page_config(page_title="AcroInformer", layout="wide")
+st.title("📄 AcroInformer – PDF Metadata Forensics")
 
-st.title("AcroForm Informer")
-st.markdown("Upload **two or more PDF files** to perform a forensic comparison based on metadata, AcroForm structures, XMP toolkit signatures, and timestamp analysis.")
+uploaded_files = st.file_uploader("Upload one or more PDF files", type=["pdf"], accept_multiple_files=True)
 
-uploaded_files = st.file_uploader("Upload PDF files", type=["pdf"], accept_multiple_files=True)
-
-if uploaded_files and len(uploaded_files) >= 2:
+if uploaded_files:
     temp_dir = tempfile.mkdtemp(dir="/tmp")
     file_map = {}
 
@@ -25,37 +20,35 @@ if uploaded_files and len(uploaded_files) >= 2:
             f.write(uploaded.read())
         file_map[uploaded.name] = file_path
 
-    metadata_list = []
+    results = []
 
     for fname, fpath in file_map.items():
         with open(fpath, "rb") as f:
             fbytes = f.read()
-
         try:
             metadata = extract_metadata(fpath, fbytes)
-            metadata_list.append(metadata)
+            results.append(metadata)
         except Exception as e:
-            st.error(f"Failed to extract metadata from {fname}: {e}")
+            st.error(f"❌ Failed to extract metadata from {fname}: {str(e)}")
 
-    if metadata_list:
-        st.header("Metadata Comparison Results")
+    # Display extracted metadata
+    for r in results:
+        st.subheader(f"{r.get('filename', 'Unnamed')}")
+        st.code(f"SHA-256: {r['sha256']}", language="bash")
+        st.markdown(f"**Producer:** {r['producer'] or '—'}")
+        st.markdown(f"**Creator:** {r['creator'] or '—'}")
+        st.markdown(f"**Creation Date:** {r['creation_date'] or '—'}")
+        st.markdown(f"**Modification Date:** {r['mod_date'] or '—'}")
+        st.markdown(f"**Toolkit:** {r['xmp_toolkit'] or '—'}")
+        st.markdown(f"**Signature Type:** {r['signature_type'] or '—'}")
+        st.markdown(f"**Fields Present:** {', '.join(r['form_fields']) if r['form_fields'] else '—'}")
+        st.markdown("---")
 
-        for r in metadata_list:
-            st.subheader(f"{r['filename']}")
-            st.code(f"SHA-256: {r['sha256']}", language="bash")
-            st.markdown(f"**Producer:** {r['producer'] or '—'}")
-            st.markdown(f"**Creator:** {r['creator'] or '—'}")
-            st.markdown(f"**Creation Date:** {r['creation_date'] or '—'}")
-            st.markdown(f"**Modification Date:** {r['mod_date'] or '—'}")
-            st.markdown(f"**PDF Version:** {r['pdf_version'] or '—'}")
-            st.markdown(f"**XMP Toolkit:** {r['xmp_toolkit'] or '—'}")
-            st.markdown(f"**Document ID:** {r['doc_id'] or '—'}")
-            st.markdown(f"**Instance ID:** {r['instance_id'] or '—'}")
-            st.markdown(f"**AcroForm Detected:** {'Yes' if r['acroform'] else 'No'}")
-            st.markdown(f"**Digital Signature Present:** {'Yes' if r['has_signature'] else 'No'}")
-            st.markdown(f"**Key Flags:** {', '.join(r['flags']) if r['flags'] else 'None'}")
-
-        st.success("Metadata extraction and comparison complete.")
-
-else:
-    st.info("Please upload **at least two** PDF files to begin comparison.")
+    # GPT summary section
+    if "openai_api_key" in st.secrets:
+        with st.spinner("🔍 Interpreting metadata for fraud signals..."):
+            summary = generate_fraud_summary(results, st.secrets["openai_api_key"])
+        st.subheader("🧠 GPT Fraud Summary")
+        st.markdown(summary)
+    else:
+        st.warning("OpenAI API key not found in Streamlit secrets.")
