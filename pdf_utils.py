@@ -1,87 +1,37 @@
 # pdf_utils.py
 
-import fitz  # PyMuPDF
+import hashlib
 from PyPDF2 import PdfReader
-from datetime import datetime
+from typing import Dict, Any
 
-def extract_metadata(file_path, file_bytes):
-    meta = {
-        "file_path": file_path,
+def extract_metadata(file_path: str, file_bytes: bytes) -> Dict[str, Any]:
+    result = {
+        "sha256": hashlib.sha256(file_bytes).hexdigest(),
         "file_size": len(file_bytes),
+        "page_count": 0,
         "acroform_present": False,
         "xfa_present": False,
-        "flattened": None,
-        "field_names": [],
-        "field_count": 0,
-        "metadata_fields": {},
-        "creation_date": None,
-        "mod_date": None,
-        "pdf_version": None,
-        "producer": None
+        "metadata": {},
+        "errors": [],
     }
 
     try:
         reader = PdfReader(file_path)
+        result["page_count"] = len(reader.pages)
 
         if "/AcroForm" in reader.trailer["/Root"]:
-            meta["acroform_present"] = True
-            form = reader.trailer["/Root"]["/AcroForm"]
-            if "/Fields" in form:
-                fields = form["/Fields"]
-                meta["field_count"] = len(fields)
-                for f in fields:
-                    field_obj = f.get_object()
-                    name = field_obj.get("/T", "")
-                    if name:
-                        meta["field_names"].append(str(name))
-
-            if "/XFA" in form:
-                meta["xfa_present"] = True
+            result["acroform_present"] = True
+            af = reader.trailer["/Root"]["/AcroForm"]
+            if af.get("/XFA"):
+                result["xfa_present"] = True
 
         doc_info = reader.metadata
-        meta["metadata_fields"] = {k: str(v) for k, v in doc_info.items() if v is not None}
-
-        meta["pdf_version"] = reader.pdf_header.replace("%PDF-", "") if hasattr(reader, "pdf_header") else None
-        meta["producer"] = doc_info.get("/Producer", "")
-
-        created = doc_info.get("/CreationDate", "")
-        if created.startswith("D:"):
-            try:
-                meta["creation_date"] = parse_pdf_date(created)
-            except:
-                meta["creation_date"] = created
-
-        modified = doc_info.get("/ModDate", "")
-        if modified.startswith("D:"):
-            try:
-                meta["mod_date"] = parse_pdf_date(modified)
-            except:
-                meta["mod_date"] = modified
+        if doc_info:
+            result["metadata"] = {
+                k.replace("/", ""): v for k, v in doc_info.items() if isinstance(k, str)
+            }
 
     except Exception as e:
-        meta["error"] = f"PyPDF2 failed: {str(e)}"
+        result["errors"].append(str(e))
 
-    try:
-        doc = fitz.open(stream=file_bytes, filetype="pdf")
-        flattened = True
-        for page in doc:
-            annots = page.annots()
-            if annots:
-                flattened = False
-                break
-        meta["flattened"] = flattened
-    except Exception as e:
-        meta["flattened"] = None
-        meta["fitz_error"] = str(e)
-
-    return meta
-
-
-def parse_pdf_date(datestr):
-    # Parses PDF date strings like D:20231206143000-08'00'
-    try:
-        clean = datestr.replace("D:", "").split("-")[0].split("+")[0]
-        dt = datetime.strptime(clean[:14], "%Y%m%d%H%M%S")
-        return dt.isoformat()
-    except Exception:
-        return datestr
+    return result
