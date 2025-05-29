@@ -2,18 +2,20 @@
 
 import logging
 from typing import Optional
-from lxml import etree
+import xml.etree.ElementTree as ET
 
 logger = logging.getLogger(__name__)
 
 def parse_xmp_toolkit(raw_xmp: bytes) -> Optional[str]:
     """
-    Extract the <xmp:Toolkit> value from raw XMP bytes.
+    Extract the <xmp:Toolkit> element from raw XMP bytes using only the stdlib.
     """
     try:
-        root = etree.fromstring(raw_xmp)
-        tk = root.find(".//{http://ns.adobe.com/xap/1.0/}Toolkit")
-        return tk.text if tk is not None else None
-    except Exception as e:
-        logger.debug("XMP parsing failed", exc_info=e)
+        root = ET.fromstring(raw_xmp)
+        # Namespace mapping for XMP Core
+        ns = {"xmp": "http://ns.adobe.com/xap/1.0/"}
+        elem = root.find(".//xmp:Toolkit", ns)
+        return elem.text if elem is not None else None
+    except ET.ParseError:
+        logger.debug("Failed to parse XMP with ElementTree", exc_info=True)
         return None
