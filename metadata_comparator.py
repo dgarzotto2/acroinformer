@@ -1,80 +1,61 @@
-import fitz  # PyMuPDF
-import hashlib
-import re
-import datetime
+import difflib
 
-def extract_metadata(file_path: str) -> dict:
-    result = {
-        "filename": file_path.split("/")[-1],
-        "sha256": "",
-        "producer": None,
-        "creator": None,
-        "creation_date": None,
-        "mod_date": None,
-        "xmp_toolkit": None,
-        "instance_id": None,
-        "document_id": None,
-        "metadata_flags": [],
-        "raw_xmp": "",
+def compare_metadata(metadata_list):
+    if len(metadata_list) < 2:
+        return {"error": "At least two metadata records are required for comparison."}
+
+    results = {
+        "shared_xmp_ids": [],
+        "identical_creation_times": [],
+        "identical_modification_times": [],
+        "shared_toolkits": [],
+        "shared_acroform_flags": [],
+        "warnings": [],
+        "differences": {}
     }
 
-    try:
-        with open(file_path, "rb") as f:
-            file_bytes = f.read()
-            result["sha256"] = hashlib.sha256(file_bytes).hexdigest()
+    # Build pairwise comparisons
+    for i in range(len(metadata_list)):
+        for j in range(i + 1, len(metadata_list)):
+            meta_a = metadata_list[i]
+            meta_b = metadata_list[j]
+            name_a = meta_a.get("filename", f"file_{i}")
+            name_b = meta_b.get("filename", f"file_{j}")
 
-        doc = fitz.open(file_path)
-        meta = doc.metadata
+            pair_name = f"{name_a} vs {name_b}"
+            results["differences"][pair_name] = []
 
-        result["producer"] = meta.get("producer")
-        result["creator"] = meta.get("creator")
-        result["creation_date"] = meta.get("creationDate")
-        result["mod_date"] = meta.get("modDate")
+            # Check XMP IDs
+            xmp_a = meta_a.get("xmp", {})
+            xmp_b = meta_b.get("xmp", {})
 
-        # Search for embedded XMP packet
-        raw = file_bytes.decode(errors="ignore")
-        xmp_match = re.search(r"<x:xmpmeta[\s\S]+?</x:xmpmeta>", raw)
-        if xmp_match:
-            xmp = xmp_match.group(0)
-            result["raw_xmp"] = xmp
+            if xmp_a.get("xmpMM:DocumentID") == xmp_b.get("xmpMM:DocumentID"):
+                if xmp_a.get("xmpMM:InstanceID") != xmp_b.get("xmpMM:InstanceID"):
+                    results["shared_xmp_ids"].append(pair_name)
+                    results["warnings"].append(
+                        f"{pair_name}: Shared xmpMM:DocumentID but different InstanceIDs — likely duplication from template."
+                    )
 
-            # Extract common forensic markers
-            toolkit_match = re.search(r"<xmp:Toolkit>([^<]+)</xmp:Toolkit>", xmp)
-            if toolkit_match:
-                result["xmp_toolkit"] = toolkit_match.group(1)
+            # Check creation/mod times
+            if meta_a.get("CreationDate") == meta_b.get("CreationDate"):
+                results["identical_creation_times"].append(pair_name)
+                results["warnings"].append(f"{pair_name}: Identical CreationDate — may be batch-generated.")
+            if meta_a.get("ModDate") == meta_b.get("ModDate"):
+                results["identical_modification_times"].append(pair_name)
+                results["warnings"].append(f"{pair_name}: Identical ModDate — suggests simultaneous editing.")
 
-            iid_match = re.search(r"<xmpMM:InstanceID>[^:]+:([^<]+)</xmpMM:InstanceID>", xmp)
-            if iid_match:
-                result["instance_id"] = iid_match.group(1)
+            # Toolkit reuse
+            if meta_a.get("xmp", {}).get("xmp:CreatorTool") == meta_b.get("xmp", {}).get("xmp:CreatorTool"):
+                results["shared_toolkits"].append(pair_name)
 
-            docid_match = re.search(r"<xmpMM:DocumentID>[^:]+:([^<]+)</xmpMM:DocumentID>", xmp)
-            if docid_match:
-                result["document_id"] = docid_match.group(1)
+            # AcroForm/XFA reuse
+            if meta_a.get("acroform_flags") == meta_b.get("acroform_flags") and meta_a.get("acroform_flags") is not None:
+                results["shared_acroform_flags"].append(pair_name)
 
-            # Heuristic checks
-            if result["instance_id"] == result["document_id"]:
-                result["metadata_flags"].append("Single-use ID – no regeneration detected")
-            elif result["instance_id"] and result["document_id"]:
-                result["metadata_flags"].append("InstanceID ≠ DocumentID – reuse or flattening suspected")
+            # Raw diff (truncated display)
+            raw_a = str(meta_a)[:4000]
+            raw_b = str(meta_b)[:4000]
+            diff = list(difflib.unified_diff(raw_a.splitlines(), raw_b.splitlines()))
+            results["differences"][pair_name] = diff[:50]  # limit for display
 
-            if result["xmp_toolkit"] and "Adobe" not in result["xmp_toolkit"]:
-                result["metadata_flags"].append("Non-Adobe XMP toolkit – synthetic or 3rd-party generation")
-
-        # Check for timestamp match
-        if result["creation_date"] and result["mod_date"]:
-            if result["creation_date"] == result["mod_date"]:
-                result["metadata_flags"].append("Creation and modification dates are identical – likely mass-produced")
-            else:
-                # Check modification after creation
-                try:
-                    created = datetime.datetime.strptime(result["creation_date"][2:16], "%Y%m%d%H%M%S")
-                    modified = datetime.datetime.strptime(result["mod_date"][2:16], "%Y%m%d%H%M%S")
-                    if modified < created:
-                        result["metadata_flags"].append("Modification date precedes creation date – metadata spoofing")
-                except Exception:
-                    pass
-
-    except Exception as e:
-        result["metadata_flags"].append(f"Metadata extraction failed: {str(e)}")
-
-    return result
+    return results
