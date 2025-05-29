@@ -34,20 +34,11 @@ st.markdown("""
 st.title("Acroform Informer")
 st.subheader("Forensic PDF Comparison and Affidavit Generator")
 
-st.markdown("""
-**Purpose:**  
-This system detects and reports forensic similarities between PDF files. It generates court-ready affidavits detailing metadata matches, AcroForm reuse, and potential flattening or stealth editing.
-""")
-
-# Upload prompt
+# Clean upload prompt only — no additional descriptive or certification text
 uploaded_files = st.file_uploader("Upload 2 or more PDF files for analysis", type="pdf", accept_multiple_files=True)
 
 if uploaded_files and len(uploaded_files) >= 2:
-    # Use safe temp directory on Streamlit Cloud
-    safe_tmp = os.path.join("/tmp", "acroinformer_temp")
-    os.makedirs(safe_tmp, exist_ok=True)
-    temp_dir = tempfile.mkdtemp(dir=safe_tmp)
-
+    temp_dir = tempfile.mkdtemp()
     st.success(f"{len(uploaded_files)} PDF files uploaded.")
 
     file_map = {}
@@ -107,7 +98,7 @@ if uploaded_files and len(uploaded_files) >= 2:
 
     with open(zip_path, "rb") as f:
         st.download_button(
-            label="📥 Download Evidence Bundle (ZIP)",
+            label="Download Evidence Bundle (ZIP)",
             data=f,
             file_name="evidence_bundle.zip",
             mime="application/zip"
