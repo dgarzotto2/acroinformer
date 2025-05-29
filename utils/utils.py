@@ -1,19 +1,9 @@
-import hashlib
+# utils/utils.py
 
-def hash_file_sha256(path):
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        while chunk := f.read(8192):
-            h.update(chunk)
-    return h.hexdigest()
+def summarize_entities_for_gpt(entities):
+    names = ", ".join(entities.get("names", [])[:5])
+    amounts = ", ".join(entities.get("amounts", [])[:3])
+    keys = ", ".join(entities.get("registry_keys", [])[:3])
+    dates = ", ".join(entities.get("dates", [])[:3])
 
-def detect_duplicate_metadata(metadata_bank):
-    seen = {}
-    flags = []
-    for sha, meta in metadata_bank.items():
-        sig = (meta.get("creation_date"), meta.get("author"), meta.get("producer"))
-        if sig in seen:
-            flags.append(f"Duplicate: {sha} and {seen[sig]} share metadata signature {sig}")
-        else:
-            seen[sig] = sha
-    return flags
+    return f"Names: {names}; Amounts: {amounts}; Registry Keys: {keys}; Dates: {dates}"
