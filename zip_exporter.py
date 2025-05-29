@@ -1,20 +1,21 @@
-# zip_exporter.py
-
 import zipfile
 import os
+from datetime import datetime
 
-def create_zip_bundle(affidavit_dir, csv_path, output_path):
-    """
-    Creates a ZIP file containing all affidavits and the main report CSV.
-    """
+def create_zip_bundle(affidavit_dir, report_csv, output_path=None):
+    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    if output_path is None:
+        output_path = f"/tmp/evidence_bundle_{timestamp}.zip"
+
     with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zipf:
         # Add report CSV
-        if os.path.exists(csv_path):
-            zipf.write(csv_path, arcname=os.path.basename(csv_path))
+        if os.path.exists(report_csv):
+            zipf.write(report_csv, arcname="batch_report.csv")
 
-        # Add affidavit PDFs
-        for root, _, files in os.walk(affidavit_dir):
-            for file in files:
-                full_path = os.path.join(root, file)
-                arc_name = os.path.join("affidavits", file)
-                zipf.write(full_path, arcname=arc_name)
+        # Add all affidavits
+        if os.path.exists(affidavit_dir):
+            for fname in os.listdir(affidavit_dir):
+                fpath = os.path.join(affidavit_dir, fname)
+                zipf.write(fpath, arcname=os.path.join("affidavits", fname))
+
+    return output_path
