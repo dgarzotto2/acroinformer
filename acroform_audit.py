@@ -1,51 +1,51 @@
-from PyPDF2 import PdfReader
-
-def audit_acroform_fields(file_bytes, filename="Unknown"):
+def audit_acroform_fields(field_data):
+    """
+    Analyze AcroForm/XFA structure to detect signs of synthetic generation or reuse.
+    Input:
+        field_data: dict with AcroForm/XFA info from each PDF
+            e.g., {
+                "filename.pdf": {
+                    "acroform_fields": [...],
+                    "xfa_fields": [...],
+                    "form_flags": {...}
+                },
+                ...
+            }
+    Returns:
+        dict with summary audit findings
+    """
     results = {
-        "filename": filename,
-        "has_acroform": False,
-        "field_names": [],
-        "empty_fields": [],
-        "signature_fields": [],
-        "synthetic_warnings": [],
-        "raw_acroform_data": {},
+        "empty_forms": [],
+        "identical_fieldsets": [],
+        "suspicious_templates": [],
+        "summary": [],
     }
 
-    try:
-        reader = PdfReader(file_bytes)
-        if "/AcroForm" not in reader.trailer["/Root"]:
-            return results  # No AcroForm present
+    filenames = list(field_data.keys())
 
-        results["has_acroform"] = True
-        acroform = reader.trailer["/Root"]["/AcroForm"]
-        fields = acroform.get("/Fields", [])
+    for fname, data in field_data.items():
+        afields = data.get("acroform_fields", [])
+        xfields = data.get("xfa_fields", [])
+        flags = data.get("form_flags", {})
 
-        for field in fields:
-            field_obj = field.get_object()
-            name = field_obj.get("/T", "")
-            value = field_obj.get("/V", "")
-            ftype = field_obj.get("/FT", "")
-            results["field_names"].append(name)
-            results["raw_acroform_data"][name] = {
-                "value": str(value),
-                "type": str(ftype),
-            }
+        if not afields and not xfields:
+            results["empty_forms"].append(fname)
+            results["summary"].append(f"{fname}: No AcroForm or XFA fields — possible static/pasted signature or image overlay.")
 
-            if ftype == "/Sig":
-                results["signature_fields"].append(name)
+        if flags.get("needs_appearance") == False and flags.get("sig_flags") == 0:
+            results["suspicious_templates"].append(fname)
+            results["summary"].append(f"{fname}: Form does not require appearances and has no signature flags — may be synthetic.")
 
-            if not value:
-                results["empty_fields"].append(name)
-
-        # Warnings for synthetic use
-        if results["signature_fields"] and results["empty_fields"]:
-            results["synthetic_warnings"].append("Some signature fields are empty – likely form shell reuse.")
-        if any(n.lower() in ["sig1", "signhere", "signature"] for n in results["field_names"]):
-            results["synthetic_warnings"].append("Generic field names suggest auto-template form usage.")
-        if len(results["field_names"]) > 0 and not results["signature_fields"]:
-            results["synthetic_warnings"].append("AcroForm present with no digital signature field – check for pasted images.")
-
-    except Exception as e:
-        results["synthetic_warnings"].append(f"AcroForm audit failed: {str(e)}")
+    # Compare field sets across documents
+    for i in range(len(filenames)):
+        for j in range(i + 1, len(filenames)):
+            f1 = filenames[i]
+            f2 = filenames[j]
+            af1 = set(field_data[f1].get("acroform_fields", []))
+            af2 = set(field_data[f2].get("acroform_fields", []))
+            if af1 == af2 and af1:
+                pair = f"{f1} vs {f2}"
+                results["identical_fieldsets"].append(pair)
+                results["summary"].append(f"{pair}: Identical AcroForm fields — form may have been cloned or mass-reused.")
 
     return results
