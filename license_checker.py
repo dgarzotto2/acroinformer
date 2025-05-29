@@ -2,13 +2,22 @@
 
 def check_pdf_license(metadata):
     flags = []
-    producer = metadata.get("/Producer", "").lower()
-    creator = metadata.get("/Creator", "").lower()
+    agpl_gpl_tools = {
+        "iText": "AGPL",
+        "iTextSharp": "AGPL",
+        "Ghostscript": "GPL",
+        "TCPDF": "LGPL",
+        "PdfTk": "GPL",
+        "PDFBox": "Apache (watch for misuse)",
+        "Apache PDFBox": "Apache (watch for misuse)",
+    }
 
-    agpl_tools = ["itext", "bfo", "ghostscript", "qpdf", "pdfreactor"]
+    producer = metadata.get("producer", "") or ""
+    creator = metadata.get("creator", "") or ""
+    xmp_tool = metadata.get("xmp_toolkit", "") or ""
 
-    for tool in agpl_tools:
-        if tool in producer or tool in creator:
-            flags.append(f"{tool.upper()} (AGPL/GPL) detected")
+    for tool, license in agpl_gpl_tools.items():
+        if tool.lower() in producer.lower() or tool.lower() in creator.lower() or tool.lower() in xmp_tool.lower():
+            flags.append(f"{tool} detected – {license} license may prohibit commercial or legal use.")
 
     return flags
