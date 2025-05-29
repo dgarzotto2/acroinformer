@@ -1,75 +1,60 @@
-import os
 import streamlit as st
+import os
 import tempfile
-from utils.extractor import extract_metadata
-from utils.gpt_interpreter import run_gpt_analysis
-import openai
+from extract_metadata import extract_metadata
 
-# Set up OpenAI from Streamlit secrets
-openai.api_key = st.secrets["openai_api_key"]
+st.set_page_config(page_title="AcroInformer – PDF Forensic Metadata Scanner", layout="wide")
 
-st.set_page_config(
-    page_title="AcroInformer – Forensic PDF Metadata Examiner",
-    layout="wide"
-)
-
-st.title("AcroInformer – PDF Metadata & Signature Forensics")
-
-st.markdown("""
-Upload two or more PDF documents to compare:
-- Metadata consistency (creation, modification, XMP IDs)
-- AcroForm structure, reuse, and flattening
-- Signature validation (digital or static overlays)
-- Potential signs of synthetic generation or tampering
-""")
+st.title("📄 AcroInformer – PDF Forensic Metadata Scanner")
+st.markdown("Upload at least two PDF documents to begin forensic comparison.")
 
 uploaded_files = st.file_uploader(
-    "Select PDF files", type="pdf", accept_multiple_files=True
+    "Select two or more PDF files for analysis",
+    type=["pdf"],
+    accept_multiple_files=True
 )
 
 if not uploaded_files or len(uploaded_files) < 2:
-    st.warning("Please upload at least 2 PDF files for comparison.")
+    st.warning("Please upload at least two PDF files to begin.")
     st.stop()
 
-with st.spinner("Processing uploaded PDFs..."):
-    temp_dir = tempfile.mkdtemp(dir="/tmp")
-    file_map = {}
+temp_dir = tempfile.mkdtemp(dir="/tmp")
+file_map = {}
 
-    for uploaded in uploaded_files:
-        file_path = os.path.join(temp_dir, uploaded.name)
-        with open(file_path, "wb") as f:
-            f.write(uploaded.read())
-        file_map[uploaded.name] = file_path
+for uploaded in uploaded_files:
+    file_path = os.path.join(temp_dir, uploaded.name)
+    file_bytes = uploaded.read()
+    with open(file_path, "wb") as f:
+        f.write(file_bytes)
+    file_map[uploaded.name] = {
+        "path": file_path,
+        "bytes": file_bytes
+    }
 
-    metadata_list = []
-    for fname, fpath in file_map.items():
-        with open(fpath, "rb") as f:
-            fbytes = f.read()
-        try:
-            meta = extract_metadata(fpath, fbytes)
-            metadata_list.append(meta)
-        except Exception as e:
-            st.error(f"Failed to extract metadata from {fname}: {str(e)}")
-            continue
+st.success(f"✅ {len(file_map)} PDF files successfully uploaded and saved.")
+st.markdown("---")
 
-if not metadata_list:
-    st.error("No valid metadata could be extracted from the uploaded PDFs.")
-    st.stop()
+results = []
 
-st.success(f"Successfully extracted metadata from {len(metadata_list)} PDF(s).")
+for fname, data in file_map.items():
+    try:
+        metadata = extract_metadata(data["path"], data["bytes"])
+        results.append(metadata)
+    except Exception as e:
+        st.error(f"❌ Failed to extract metadata from {fname}: {str(e)}")
 
-# Display metadata
-for meta in metadata_list:
-    st.subheader(f"📄 {meta.get('filename', 'Unknown')}")
-    st.json(meta)
-
-# GPT Forensic Summary (if available)
-if openai.api_key:
+# Display extracted metadata
+for r in results:
+    st.subheader(f"📌 {r.get('filename', 'Unnamed')}")
+    st.code(f"SHA-256: {r.get('sha256', '—')}", language="bash")
+    st.markdown(f"**Producer:** {r.get('producer', '—')}")
+    st.markdown(f"**Creator:** {r.get('creator', '—')}")
+    st.markdown(f"**Creation Date:** {r.get('creation_date', '—')}")
+    st.markdown(f"**Modification Date:** {r.get('mod_date', '—')}")
+    st.markdown(f"**XMP Toolkit:** {r.get('xmp_toolkit', '—')}")
+    st.markdown(f"**XMP Instance ID:** {r.get('xmp_instance_id', '—')}")
+    st.markdown(f"**XMP Document ID:** {r.get('xmp_document_id', '—')}")
+    st.markdown(f"**Has AcroForm Fields:** {r.get('has_acroform', False)}")
+    st.markdown(f"**Has Digital Signature:** {r.get('has_signature', False)}")
+    st.markdown(f"**Signature Type:** {r.get('signature_type', '—')}")
     st.markdown("---")
-    st.header("🧠 GPT-Powered Forensic Interpretation")
-    with st.spinner("Interpreting forensic patterns using GPT..."):
-        try:
-            gpt_summary = run_gpt_analysis(metadata_list)
-            st.markdown(gpt_summary)
-        except Exception as e:
-            st.error(f"GPT analysis failed: {str(e)}")
