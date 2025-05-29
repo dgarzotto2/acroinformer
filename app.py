@@ -1,4 +1,6 @@
+# /mount/src/acroinformer/app.py
 #!/usr/bin/env python3
+
 import os
 import streamlit as st
 from pdf_utils import extract_metadata
@@ -25,8 +27,10 @@ def main():
         st.info("Please upload a PDF to begin analysis.")
         return
 
+    # Save and read bytes
     file_path, file_bytes = save_uploaded_file(uploaded_file)
-    # <-- NOW calling with two arguments
+
+    # --- Here we call extract_metadata WITH BOTH arguments ---
     metadata = extract_metadata(file_path, file_bytes)
 
     st.header("Metadata Summary")
