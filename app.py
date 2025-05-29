@@ -34,7 +34,6 @@ st.markdown("""
 st.title("Acroform Informer")
 st.subheader("Forensic PDF Comparison and Affidavit Generator")
 
-# File uploader only — no certification text
 uploaded_files = st.file_uploader("Upload 2 or more PDF files for analysis", type="pdf", accept_multiple_files=True)
 
 if uploaded_files and len(uploaded_files) >= 2:
@@ -49,10 +48,9 @@ if uploaded_files and len(uploaded_files) >= 2:
             file_map[uploaded.name] = file_path
 
         st.success(f"{len(uploaded_files)} PDF files uploaded.")
-
         st.subheader("Extracted Metadata & SHA-256 Hashes")
-        metadata = {}
 
+        metadata = {}
         for fname, fpath in file_map.items():
             with open(fpath, "rb") as f:
                 file_bytes = f.read()
