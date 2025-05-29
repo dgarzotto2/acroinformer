@@ -51,3 +51,4 @@ if uploaded_file:
 
     except Exception as e:
         st.error(f"Error analyzing {uploaded_file.name}: {e}")
+        
