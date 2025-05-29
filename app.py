@@ -13,7 +13,7 @@ from zip_exporter import create_zip_bundle
 
 st.set_page_config(page_title="Acroform Informer", layout="wide")
 
-# Dark mode override
+# Dark theme UI override
 st.markdown("""
     <style>
     body {
@@ -39,6 +39,7 @@ st.markdown("""
 This system detects and reports forensic similarities between PDF files. It generates court-ready affidavits detailing metadata matches, AcroForm reuse, and potential flattening or stealth editing.
 """)
 
+# File uploader prompt only — no certification text
 uploaded_files = st.file_uploader("Upload 2 or more PDF files for analysis", type="pdf", accept_multiple_files=True)
 
 if uploaded_files and len(uploaded_files) >= 2:
@@ -52,7 +53,6 @@ if uploaded_files and len(uploaded_files) >= 2:
             f.write(file.read())
         file_map[file.name] = file_path
 
-    # Extract metadata and compute hashes
     st.subheader("Extracted Metadata & SHA-256 Hashes")
     metadata = {}
     for fname, fpath in file_map.items():
@@ -66,7 +66,6 @@ if uploaded_files and len(uploaded_files) >= 2:
         st.text(f"SHA-256: {sha256}")
         st.json(meta)
 
-    # Initialize output report
     report_csv = os.path.join(temp_dir, "batch_report.csv")
     init_report_csv(report_csv)
 
@@ -99,7 +98,6 @@ if uploaded_files and len(uploaded_files) >= 2:
     if not results:
         st.info("No suspicious matches (score > 50) were detected.")
 
-    # Export ZIP bundle
     zip_path = os.path.join(temp_dir, "evidence_bundle.zip")
     create_zip_bundle(affidavit_dir, report_csv, zip_path)
 
@@ -112,4 +110,3 @@ if uploaded_files and len(uploaded_files) >= 2:
         )
 
     shutil.rmtree(temp_dir)
-    
