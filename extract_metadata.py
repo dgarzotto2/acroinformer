@@ -57,4 +57,3 @@ def extract_metadata(file_path, file_bytes):
         "has_signature_field": has_signature_field,
         "tamper_risk": tamper_risk,
     }
-    
