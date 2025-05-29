@@ -3,81 +3,52 @@
 from reportlab.lib.pagesizes import LETTER
 from reportlab.pdfgen import canvas
 from datetime import datetime
+import os
 
 def generate_affidavit(meta1, meta2, score, reasons, output_path):
     """
-    Generates a forensic affidavit PDF comparing two documents.
+    Generates a PDF affidavit comparing metadata from two documents and listing suspicious similarities.
     """
-
     c = canvas.Canvas(output_path, pagesize=LETTER)
     width, height = LETTER
-    margin = 50
-    line_height = 14
-    y = height - margin
 
-    # Title
-    c.setFont("Helvetica-Bold", 16)
-    c.drawString(margin, y, "Forensic Document Comparison Affidavit")
-    y -= line_height * 2
-
-    # Timestamp
-    c.setFont("Helvetica", 10)
-    c.drawString(margin, y, f"Date of Analysis: {datetime.utcnow().isoformat()} UTC")
-    y -= line_height * 2
-
-    # Score section
-    c.setFont("Helvetica-Bold", 12)
-    c.drawString(margin, y, f"Suspicion Score: {score}")
-    y -= line_height
-    if score > 50:
+    def draw_header():
+        c.setFont("Helvetica-Bold", 14)
+        c.drawString(72, height - 72, "Forensic Affidavit of PDF Metadata Comparison")
         c.setFont("Helvetica", 10)
-        c.drawString(margin, y, "This score exceeds the forensic suspicion threshold.")
-        y -= line_height * 2
+        c.drawString(72, height - 90, f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
-    # Document A metadata
-    c.setFont("Helvetica-Bold", 12)
-    c.drawString(margin, y, "Document A Metadata")
-    y -= line_height
-    c.setFont("Helvetica", 10)
-    for k, v in meta1.items():
-        c.drawString(margin + 10, y, f"{k}: {v}")
-        y -= line_height
-        if y < margin:
-            c.showPage()
-            y = height - margin
+    def draw_section(title, lines, y_start):
+        y = y_start
+        c.setFont("Helvetica-Bold", 12)
+        c.drawString(72, y, title)
+        c.setFont("Helvetica", 10)
+        y -= 16
+        for line in lines:
+            c.drawString(80, y, line)
+            y -= 14
+        return y - 10
 
-    y -= line_height
-    c.setFont("Helvetica-Bold", 12)
-    c.drawString(margin, y, "Document B Metadata")
-    y -= line_height
-    c.setFont("Helvetica", 10)
-    for k, v in meta2.items():
-        c.drawString(margin + 10, y, f"{k}: {v}")
-        y -= line_height
-        if y < margin:
-            c.showPage()
-            y = height - margin
+    draw_header()
+    y = height - 120
 
-    # Reasons section
-    y -= line_height
-    c.setFont("Helvetica-Bold", 12)
-    c.drawString(margin, y, "Forensic Indicators")
-    y -= line_height
-    c.setFont("Helvetica", 10)
-    for reason in reasons:
-        c.drawString(margin + 10, y, f"- {reason}")
-        y -= line_height
-        if y < margin:
-            c.showPage()
-            y = height - margin
+    # File 1 summary
+    lines1 = [f"{k}: {v}" for k, v in meta1.items() if isinstance(v, str) or isinstance(v, list)]
+    y = draw_section("Document 1 Metadata", lines1, y)
 
-    # Footer
-    y = margin
-    c.setFont("Helvetica-Oblique", 9)
-    c.drawString(margin, y, "Certified by Forensix, LLC")
-    y -= line_height
-    c.drawString(margin, y, "This analysis was performed using best available forensic practices and tools including PDF-XChange Editor, ReportLab, hashlib, and XMPToolkit-compatible metadata parsers.")
-    y -= line_height
-    c.drawString(margin, y, "Affidavit generated via Acroform Informer PDF Forensics Suite.")
+    # File 2 summary
+    lines2 = [f"{k}: {v}" for k, v in meta2.items() if isinstance(v, str) or isinstance(v, list)]
+    y = draw_section("Document 2 Metadata", lines2, y)
+
+    # Suspicion score and reasons
+    reason_lines = [f"Score: {score}"]
+    reason_lines += [f"Reason: {r}" for r in reasons]
+    y = draw_section("Suspicion Score & Justifications", reason_lines, y)
+
+    # Footer certification
+    c.setFont("Helvetica-Oblique", 10)
+    c.drawString(72, 80, "Certified by Forensix, LLC")
+    c.drawString(72, 66, "This affidavit was generated using industry-standard methods and best practices,")
+    c.drawString(72, 52, "following the guidelines outlined in the Swigdoc framework for digital forensic evidence.")
 
     c.save()
