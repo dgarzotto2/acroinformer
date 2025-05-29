@@ -1,88 +1,94 @@
-import fitz  # PyMuPDF
+from PyPDF2 import PdfReader
+import os
 
-def extract_metadata(pdf_path):
+def extract_metadata(file_path):
     result = {
-        "metadata": {},
-        "has_xfa": False,
-        "has_acroform": False,
-        "embedded_files": [],
-        "js": [],
-        "font_warnings": [],
-        "notes": [],
+        "obfuscation_libraries": [],
         "hidden_lib_usage": False,
         "byte_range_mismatch": False,
-        "obfuscation_libraries": []
-    }
-
-    known_obfuscators = {
-        "ABCpdf": "ABCpdf",
-        "iText": "iText",
-        "Big Faceless": "BFO",
-        "BFO": "BFO",
-        "PDFLib": "PDFLib",
-        "Prince": "Prince",
-        "Flying Saucer": "Flying Saucer",
-        "Apitron": "Apitron",
-        "Aspose": "Aspose",
-        "TallComponents": "TallPDF",
-        "PdfSharp": "PdfSharp"
+        "font_warnings": False,
+        "has_xfa": False,
+        "has_acroform": False,
+        "embedded_files": False,
+        "js": [],
+        "notes": [],
     }
 
     try:
-        doc = fitz.open(pdf_path)
-        meta = doc.metadata
-        result["metadata"] = meta
+        with open(file_path, "rb") as f:
+            reader = PdfReader(f)
 
-        # --- Obfuscation Library Detection ---
-        obfuscators_found = []
-        for key in [meta.get("producer", ""), meta.get("creator", "")]:
-            for marker, lib in known_obfuscators.items():
-                if marker.lower() in key.lower():
-                    obfuscators_found.append(lib)
-        result["obfuscation_libraries"] = list(set(obfuscators_found))
-        if obfuscators_found:
-            result["hidden_lib_usage"] = True
-            result["notes"].append("PDF generated using known obfuscating library.")
+            # Producer and Creator
+            info = reader.metadata
+            producer = info.get("/Producer", "").lower() if info else ""
+            creator = info.get("/Creator", "").lower() if info else ""
 
-        # --- Form & XFA Check ---
-        if "XFA" in doc.xref_object(1):
-            result["has_xfa"] = True
-        if "/AcroForm" in str(doc.read_metadata()):
-            result["has_acroform"] = True
+            if "abcpdf" in producer or "abcpdf" in creator:
+                result["obfuscation_libraries"].append("ABCpdf")
+                result["hidden_lib_usage"] = True
+            if "itext" in producer or "itext" in creator:
+                result["obfuscation_libraries"].append("iText")
+                result["hidden_lib_usage"] = True
+            if "bfo" in producer or "big.faceless" in producer:
+                result["obfuscation_libraries"].append("BFO")
+                result["hidden_lib_usage"] = True
 
-        # --- Embedded JavaScript ---
-        for page_num in range(len(doc)):
-            page = doc[page_num]
-            js = page.get_text("rawdict").get("js", "")
-            if js:
-                result["js"].append(js)
+            # Check for JavaScript
+            if "/Names" in reader.trailer.get("/Root", {}):
+                names = reader.trailer["/Root"]["/Names"]
+                if "/JavaScript" in names:
+                    js_names = names["/JavaScript"]
+                    if isinstance(js_names, dict) and "/Names" in js_names:
+                        js_array = js_names["/Names"]
+                        for i in range(0, len(js_array), 2):
+                            js_entry = js_array[i+1]
+                            if "/JS" in js_entry:
+                                js_code = js_entry["/JS"]
+                                result["js"].append(str(js_code))
 
-        # --- Embedded Files (via Names dictionary) ---
-        if "Names" in doc.pdf_catalog():
-            names_dict = doc.pdf_catalog()["Names"]
-            if "EmbeddedFiles" in str(names_dict):
-                result["notes"].append("Embedded files detected (not fully extracted).")
+            # Check for embedded files
+            catalog = reader.trailer["/Root"]
+            if "/Names" in catalog:
+                names_dict = catalog["/Names"]
+                if "/EmbeddedFiles" in names_dict:
+                    result["embedded_files"] = True
 
-        # --- Font Warnings ---
-        for i in range(len(doc)):
-            page = doc[i]
-            blocks = page.get_text("dict")["blocks"]
-            for block in blocks:
-                if block["type"] == 0 and "font" in block:
-                    font_str = block.get("font", "")
-                    if "/CIDFont" in font_str:
-                        result["font_warnings"].append("CID font usage detected – may suppress Unicode mapping.")
+            # AcroForm and XFA detection
+            if "/AcroForm" in catalog:
+                result["has_acroform"] = True
+                acroform = catalog["/AcroForm"]
+                if isinstance(acroform, dict):
+                    if "/XFA" in acroform:
+                        result["has_xfa"] = True
 
-        # --- ByteRange Tamper Check ---
-        try:
-            b_range = meta.get("/ByteRange") or meta.get("ByteRange")
-            if isinstance(b_range, str) and len(b_range.split()) > 4:
-                result["byte_range_mismatch"] = True
-                result["notes"].append("Suspicious ByteRange length – possible tampering.")
-        except Exception:
-            pass
+            # CID font warning
+            for page in reader.pages:
+                if "/Resources" in page:
+                    res = page["/Resources"]
+                    if "/Font" in res:
+                        fonts = res["/Font"]
+                        for font_key in fonts:
+                            font = fonts[font_key]
+                            font_str = str(font)
+                            if "/CIDFont" in font_str:
+                                result["font_warnings"] = True
+                                result["notes"].append(f"CID font detected in font {font_key}")
+
+            # ByteRange check (only from trailer-level metadata if accessible)
+            try:
+                if info and "/ByteRange" in info:
+                    b_range = info.get("/ByteRange")
+                    if isinstance(b_range, str) and len(b_range.split()) > 4:
+                        result["byte_range_mismatch"] = True
+                        result["notes"].append("Suspicious ByteRange length")
+            except Exception:
+                pass
+
+            # Final summary if no flags
+            if not result["notes"]:
+                result["notes"].append("No overt tampering or suppression techniques detected.")
 
     except Exception as e:
-        result["notes"].append(f"Error reading PDF: {e}")
+        result["notes"].append(f"Error during metadata extraction: {str(e)}")
 
     return result
