@@ -1,87 +1,89 @@
-import PyPDF2
-from PyPDF2.generic import IndirectObject
+# metadata.py
 
-def extract_metadata(file_path):
+import fitz  # PyMuPDF
+from PyPDF2 import PdfReader
+from typing import Dict
+from pdf_license_fingerprint import detect_pdf_license_fingerprint
+
+
+def extract_metadata(file_path: str) -> Dict:
     result = {
         "metadata": {},
-        "embedded_js": [],
-        "tamper_flags": [],
+        "flags": [],
         "notes": [],
-        "obfuscating_library": None,
+        "xfa_present": False,
+        "cid_font_detected": False,
         "byte_range_mismatch": False,
-        "has_launch_action": False,
-        "hidden_lib_usage": False,
+        "pdf_license_risk": "None",
+        "licensing_flags": []
     }
 
     try:
-        with open(file_path, "rb") as f:
-            reader = PyPDF2.PdfReader(f)
-            doc_info = reader.metadata or {}
+        # Load basic metadata with PyMuPDF
+        doc = fitz.open(file_path)
+        result["metadata"] = doc.metadata or {}
 
-            # Convert indirect metadata safely
-            metadata_clean = {}
-            for key, value in doc_info.items():
-                if isinstance(value, IndirectObject):
-                    try:
-                        value = value.get_object()
-                    except Exception:
-                        value = str(value)
-                metadata_clean[str(key)] = str(value)
-            result["metadata"] = metadata_clean
-
-            # Detect suspicious producer/tool
-            producer = metadata_clean.get("/Producer", "").lower()
-            creator = metadata_clean.get("/Creator", "").lower()
-            tool = producer + " " + creator
-
-            if "abc" in tool or "bfo" in tool or "itext" in tool:
-                result["obfuscating_library"] = producer or creator
-                result["tamper_flags"].append("Known obfuscating PDF library used")
-                result["notes"].append(f"Generated using obfuscating tool: {result['obfuscating_library']}")
-                result["hidden_lib_usage"] = True
-
-            # ByteRange checks
-            try:
-                if "/ByteRange" in reader.trailer:
-                    br = reader.trailer["/ByteRange"]
-                elif "/Root" in reader.trailer and "/ByteRange" in reader.trailer["/Root"]:
-                    br = reader.trailer["/Root"]["/ByteRange"]
-                else:
-                    br = None
-
-                if isinstance(br, IndirectObject):
-                    br = br.get_object()
-
-                if isinstance(br, list) and len(br) > 4:
-                    result["byte_range_mismatch"] = True
-                    result["notes"].append("Suspicious ByteRange length (may indicate tampering)")
-            except Exception as e:
-                result["notes"].append(f"ByteRange check error: {str(e)}")
-
-            # Check for JavaScript and Launch Actions
-            try:
-                for page in reader.pages:
-                    annots = page.get("/Annots")
-                    if annots:
-                        if isinstance(annots, IndirectObject):
-                            annots = annots.get_object()
-                        for annot in annots:
-                            aobj = annot.get_object()
-                            if "/A" in aobj:
-                                action = aobj["/A"]
-                                if "/JS" in action or action.get("/S") == "/JavaScript":
-                                    js_code = action.get("/JS", "")
-                                    result["embedded_js"].append(str(js_code))
-                                    result["tamper_flags"].append("Embedded JavaScript detected")
-                                if action.get("/S") == "/Launch":
-                                    result["has_launch_action"] = True
-                                    result["tamper_flags"].append("LaunchAction trigger detected")
-                                    result["notes"].append("LaunchAction detected (may run executables)")
-            except Exception as e:
-                result["notes"].append(f"LaunchAction check error: {str(e)}")
+        # CID font detection (manual scan)
+        try:
+            for page in doc:
+                font_list = page.get_fonts(full=True)
+                for font in font_list:
+                    if "/CIDFont" in str(font):
+                        result["cid_font_detected"] = True
+                        result["flags"].append("CID font encoding detected")
+                        result["notes"].append("Font uses /CIDFont – possible glyph suppression")
+                        break
+                if result["cid_font_detected"]:
+                    break
+        except Exception as e:
+            result["notes"].append(f"Font parsing error: {e}")
 
     except Exception as e:
-        result["notes"].append(f"Metadata extraction error: {str(e)}")
-        result["tamper_flags"].append("Critical read error")
+        result["notes"].append(f"Error loading with PyMuPDF: {e}")
+
+    # Supplement with PyPDF2
+    try:
+        reader = PdfReader(file_path)
+
+        # ByteRange mismatch
+        try:
+            b_range = reader.trailer.get("/ByteRange", None)
+            if b_range and hasattr(b_range, "get_object"):
+                b_range = b_range.get_object()
+            if isinstance(b_range, list) and len(b_range) > 4:
+                result["byte_range_mismatch"] = True
+                result["flags"].append("ByteRange longer than expected")
+                result["notes"].append("Suspicious ByteRange length – may indicate tampering")
+        except Exception as e:
+            result["notes"].append(f"ByteRange error: {e}")
+
+        # Check for XFA (XML Forms Architecture) overlays
+        try:
+            if "/XFA" in str(reader.trailer):
+                result["xfa_present"] = True
+                result["flags"].append("XFA detected")
+                result["notes"].append("XFA form structure detected – possible flattening layer")
+        except Exception as e:
+            result["notes"].append(f"XFA detection error: {e}")
+
+        # Extract full metadata dict
+        pdf_info = {}
+        try:
+            if reader.metadata:
+                for key, value in reader.metadata.items():
+                    clean_key = key.replace("/", "")
+                    pdf_info[clean_key] = str(value)
+                result["metadata"].update(pdf_info)
+        except Exception as e:
+            result["notes"].append(f"Metadata parse error: {e}")
+
+        # Detect AGPL/GPL licensed PDF generators
+        license_info = detect_pdf_license_fingerprint(result["metadata"])
+        if license_info["licensing_flag"]:
+            result["licensing_flags"].append(license_info["licensing_flag"])
+            result["pdf_license_risk"] = license_info["license_type"]
+
+    except Exception as e:
+        result["notes"].append(f"PyPDF2 load error: {e}")
 
     return result
