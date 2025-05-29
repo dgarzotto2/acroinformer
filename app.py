@@ -1,54 +1,61 @@
+# /mount/src/acroinformer/app.py
+
 import streamlit as st
 import tempfile
-import os
-import zipfile
-import datetime
 from metadata import extract_metadata
 
-st.set_page_config(page_title="AcroInformer Forensic Scanner", layout="centered")
+def main():
+    st.set_page_config(page_title="AcroInformer – PDF Metadata Analyzer", layout="centered")
+    st.title("AcroInformer")
+    st.subheader("PDF Metadata & Tampering Risk Audit")
 
-st.title("📄 AcroInformer: PDF Forensic Risk Scanner")
-st.markdown("Upload a suspected PDF file to extract hidden metadata, CID fonts, JavaScript, and obfuscation techniques.")
+    uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
 
-uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
+    if uploaded_file:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            file_path = f"{temp_dir}/{uploaded_file.name}"
+            with open(file_path, "wb") as f:
+                f.write(uploaded_file.read())
 
-def save_result_to_zip(results, output_path):
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    zip_path = os.path.join(output_path, f"acroinformer_results_{timestamp}.zip")
-    with zipfile.ZipFile(zip_path, "w") as zipf:
-        result_file = os.path.join(output_path, "result.txt")
-        with open(result_file, "w") as f:
-            for k, v in results.items():
-                f.write(f"{k}: {v}\n")
-        zipf.write(result_file, arcname="result.txt")
-    return zip_path
+            st.markdown("### 🔍 Analysis Results")
+            try:
+                r = extract_metadata(file_path)
+            except Exception as e:
+                st.error(f"Metadata extraction failed: {e}")
+                return
 
-if uploaded_file:
-    with tempfile.TemporaryDirectory() as temp_dir:
-        pdf_path = os.path.join(temp_dir, uploaded_file.name)
-        with open(pdf_path, "wb") as f:
-            f.write(uploaded_file.read())
+            if not isinstance(r, dict):
+                st.warning("No metadata returned or unexpected format.")
+                return
 
-        st.info("⏳ Scanning PDF for hidden metadata...")
-        r = extract_metadata(pdf_path)
+            st.markdown(f"- **CID Fonts Detected:** {'Yes' if r.get('cid_font_detected') else 'No'}")
+            st.markdown(f"- **XFA Forms Present:** {'Yes' if r.get('xfa_found') else 'No'}")
+            st.markdown(f"- **AcroForm Structure:** {'Yes' if r.get('acroform_detected') else 'No'}")
+            st.markdown(f"- **LaunchAction Trigger:** {'Yes' if r.get('launch_action') else 'No'}")
+            st.markdown(f"- **Hidden Library Usage:** {'Yes' if r.get('hidden_lib_usage') else 'No'}")
+            st.markdown(f"- **ByteRange Mismatch:** {'Yes' if r.get('byte_range_mismatch') else 'No'}")
+            st.markdown(f"- **Overlays Detected:** {'Yes' if r.get('overlay_detected') else 'No'}")
+            st.markdown(f"- **Suspicious XMP Toolkit:** {r.get('xmp_toolkit', 'Unknown')}")
+            st.markdown(f"- **PDF Producer:** {r.get('pdf_producer', 'Unknown')}")
+            st.markdown(f"- **Tamper Risk Score:** {r.get('risk_score', 'N/A')}")
 
-        st.success("✅ Scan complete.")
-        st.markdown("### Results Summary")
-        st.markdown(f"- **CID Font Detected:** {'Yes' if r['cid_font_detected'] else 'No'}")
-        st.markdown(f"- **XFA Forms Detected:** {'Yes' if r['xfa_found'] else 'No'}")
-        st.markdown(f"- **Launch Action Present:** {'Yes' if r['launch_action'] else 'No'}")
-        st.markdown(f"- **AcroForm Present:** {'Yes' if r['acroform_detected'] else 'No'}")
-        st.markdown(f"- **Hidden Library Usage:** {'Yes' if r['hidden_lib_usage'] else 'No'}")
-        st.markdown("### Fonts Used:")
-        st.code("\n".join(r["fonts_used"]) if r["fonts_used"] else "None")
-        if r["embedded_js"]:
             st.markdown("### Embedded JavaScript:")
-            st.code("\n".join(r["embedded_js"]))
-        else:
-            st.markdown("### Embedded JavaScript: None")
+            embedded_js = r.get("embedded_js", [])
+            if embedded_js:
+                for js_snippet in embedded_js:
+                    st.code(js_snippet)
+            else:
+                st.markdown("*None detected*")
 
-        st.markdown("---")
-        st.markdown("### 🔐 Download Full Report")
-        zip_file = save_result_to_zip(r, temp_dir)
-        with open(zip_file, "rb") as f:
-            st.download_button("Download Forensic Report (.zip)", f, file_name=os.path.basename(zip_file))
+            st.markdown("### Notes:")
+            if r.get("notes"):
+                for note in r["notes"]:
+                    st.markdown(f"- {note}")
+            else:
+                st.markdown("*No additional notes.*")
+
+    else:
+        st.info("Please upload a PDF to begin.")
+
+if __name__ == "__main__":
+    main()
