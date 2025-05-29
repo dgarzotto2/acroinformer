@@ -1,38 +1,37 @@
 import openai
-import os
+import streamlit as st
 import json
 
 def run_gpt_fraud_summary(metadata_list):
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise EnvironmentError("OPENAI_API_KEY not found in environment or .streamlit/secrets.toml.")
+    if "OPENAI_API_KEY" not in st.secrets:
+        return "[Error] OPENAI_API_KEY not found in Streamlit secrets."
 
-    openai.api_key = api_key
+    openai.api_key = st.secrets["OPENAI_API_KEY"]
 
-    # Format input into a structured prompt
-    summary_prompt = {
+    # Construct the GPT prompt
+    system_msg = {
         "role": "system",
         "content": (
-            "You are a forensic document examiner specializing in PDF metadata, XMP analysis, and signature validation. "
-            "Given a list of extracted forensic summaries from multiple PDF documents, identify signs of tampering, "
-            "synthetic document generation, flattened overlays, missing signatures, or cloned timestamps. "
-            "Return your conclusions in professional bullet points, followed by a brief formal statement that could be used in an affidavit."
+            "You are a forensic document examiner specializing in digital PDF analysis. "
+            "Review the following extracted metadata from arbitration agreements and other legal PDFs. "
+            "Detect tampering, cloned timestamps, synthetic AcroForm usage, or any signs of mass-produced agreements. "
+            "Summarize all fraud indicators as professional bullet points, followed by a short formal affidavit-style conclusion."
         )
     }
 
-    document_evidence = {
+    user_msg = {
         "role": "user",
-        "content": "Metadata list:\n\n" + json.dumps(metadata_list, indent=2)
+        "content": "Metadata input:\n\n" + json.dumps(metadata_list, indent=2)
     }
 
     try:
         response = openai.ChatCompletion.create(
             model="gpt-4",
-            messages=[summary_prompt, document_evidence],
-            temperature=0.3,
-            max_tokens=700
+            messages=[system_msg, user_msg],
+            temperature=0.2,
+            max_tokens=800
         )
         return response["choices"][0]["message"]["content"]
 
     except Exception as e:
-        return f"[GPT error] {str(e)}"
+        return f"[GPT Error] {str(e)}"
