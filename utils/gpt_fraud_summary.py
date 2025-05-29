@@ -1,39 +1,37 @@
+import streamlit as st
 import openai
-import os
 
-def summarize_fraud(report):
-    if not report.get("metadata"):
-        return "No metadata available for GPT summary."
+OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
+
+def generate_fraud_summary(entities: list, metadata: dict, filename: str) -> str:
+    openai.api_key = OPENAI_API_KEY
 
     prompt = f"""
-You are a forensic AI. Analyze the following PDF decoding result and summarize fraud risks:
+You are a digital forensics investigator. A document named '{filename}' has been processed.
+Entities:
+{entities}
 
 Metadata:
-{report.get("metadata")}
+{metadata}
 
-Fraud Flags:
-{report.get("fraud_flags")}
-
-Obfuscation Flags:
-{report.get("obfuscation_flags")}
-
-Entities:
-{report.get("entities")}
-
-Include:
-- Signs of document tampering
-- CID masked names or amounts
-- Known AGPL/GPL library usage
-- Risks related to synthetic or remote-edited PDFs
-
-Respond in a formal paragraph.
+Write a fraud summary covering:
+- Document tampering indicators (CID fonts, Unicode suppression, AGPL tools, etc.)
+- Foreign routing, concealed amounts or parcels
+- Suspicious entity roles or metadata overlaps
+Use formal, affidavit-ready language. Be concise and forensic.
 """
 
-    response = openai.ChatCompletion.create(
-        model="gpt-4",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.3,
-        max_tokens=500
-    )
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "You are an expert in PDF fraud analysis."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.3,
+            max_tokens=800
+        )
+        return response['choices'][0]['message']['content'].strip()
 
-    return response.choices[0].message.content.strip()
+    except Exception as e:
+        return f"⚠️ GPT summary unavailable: {str(e)}"
