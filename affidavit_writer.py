@@ -1,57 +1,68 @@
 # affidavit_writer.py
 
-from docx import Document
+from reportlab.lib.pagesizes import LETTER
+from reportlab.pdfgen import canvas
 from datetime import datetime
+import os
 
-def generate_affidavit(doc_a, doc_b, score, reasons, output_path):
-    document = Document()
+def generate_affidavit(meta_a, meta_b, score, reasons, output_path):
+    c = canvas.Canvas(output_path, pagesize=LETTER)
+    width, height = LETTER
+    line = height - 50
+    indent = 50
 
-    document.add_heading("Forensic Affidavit of PDF Similarity", 0)
+    def write_line(text, offset=15):
+        nonlocal line
+        c.drawString(indent, line, text)
+        line -= offset
 
-    document.add_paragraph(f"Prepared by: David Garzotto")
-    document.add_paragraph(f"Title: Founder, Forensix, LLC")
-    document.add_paragraph("Date: " + datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-    document.add_paragraph("Certification: Certified by Mile2 Investigations")
-    document.add_paragraph("Statement: This analysis was conducted using best practices in digital forensics and PDF document examination, consistent with the evidentiary methodology referenced in Swigdoc and similar frameworks.")
+    # Title and cert
+    c.setFont("Helvetica-Bold", 14)
+    write_line("Forensic Affidavit: PDF Document Comparison")
+    c.setFont("Helvetica", 10)
+    write_line(f"Generated: {datetime.utcnow().isoformat()} UTC")
 
-    document.add_heading("Documents Compared", level=1)
+    write_line("Certified by Mile2 Investigations")
+    write_line("Prepared by David Garzotto, Founder, Forensix, LLC")
+    write_line("This report was produced using best forensic practices to the best of my ability.")
+    write_line("This report conforms to methods consistent with Swigdoc standards.")
 
-    table = document.add_table(rows=3, cols=3)
-    hdr_cells = table.rows[0].cells
-    hdr_cells[0].text = "Field"
-    hdr_cells[1].text = doc_a["filename"]
-    hdr_cells[2].text = doc_b["filename"]
+    # Document A
+    write_line("")
+    c.setFont("Helvetica-Bold", 12)
+    write_line("Document A Metadata")
+    c.setFont("Helvetica", 10)
+    for k in ['filename', 'sha256', 'creation_date', 'xmp_document_id', 'xmp_instance_id']:
+        write_line(f"{k}: {meta_a.get(k, 'N/A')}")
 
-    def row(label, a_val, b_val):
-        row_cells = table.add_row().cells
-        row_cells[0].text = label
-        row_cells[1].text = a_val or "N/A"
-        row_cells[2].text = b_val or "N/A"
+    # Document B
+    write_line("")
+    c.setFont("Helvetica-Bold", 12)
+    write_line("Document B Metadata")
+    c.setFont("Helvetica", 10)
+    for k in ['filename', 'sha256', 'creation_date', 'xmp_document_id', 'xmp_instance_id']:
+        write_line(f"{k}: {meta_b.get(k, 'N/A')}")
 
-    row("SHA-256", doc_a["sha256"], doc_b["sha256"])
-    row("XMP DocumentID", doc_a["xmp_document_id"], doc_b["xmp_document_id"])
-    row("XMP InstanceID", doc_a["xmp_instance_id"], doc_b["xmp_instance_id"])
-    row("Creation Date", doc_a["creation_date"], doc_b["creation_date"])
-    row("Modification Date", doc_a["mod_date"], doc_b["mod_date"])
+    # Score and reasoning
+    write_line("")
+    c.setFont("Helvetica-Bold", 12)
+    write_line("Forensic Match Score")
+    c.setFont("Helvetica", 10)
+    write_line(f"Score: {score} / 100")
+    write_line(f"Flagged as suspicious: {'YES' if score > 50 else 'NO'}")
 
-    document.add_heading("AcroForm Fields", level=2)
-    if doc_a["form_fields"] or doc_b["form_fields"]:
-        for d in [("A", doc_a), ("B", doc_b)]:
-            document.add_paragraph(f"Form fields in Document {d[0]}:", style="List Bullet")
-            for f in d[1]["form_fields"]:
-                document.add_paragraph(f"{f['name']}: {f['value']}", style="List Number")
-    else:
-        document.add_paragraph("No form fields found.")
-
-    document.add_heading("Similarity Score & Findings", level=1)
-    document.add_paragraph(f"Match Score: {score}")
+    write_line("")
+    c.setFont("Helvetica-Bold", 12)
+    write_line("Indicators of Similarity or Tampering")
+    c.setFont("Helvetica", 10)
     if reasons:
         for r in reasons:
-            document.add_paragraph(r, style="List Bullet")
+            write_line(f"- {r}", offset=13)
     else:
-        document.add_paragraph("No major similarities found.")
+        write_line("No overlapping metadata or known match indicators detected.")
 
-    document.add_paragraph("\nSignature: __________________________")
-    document.add_paragraph("David Garzotto, Founder, Forensix, LLC")
+    write_line("")
+    c.setFont("Helvetica", 8)
+    write_line("This affidavit is automatically generated for forensic comparison purposes.")
 
-    document.save(output_path)
+    c.save()
