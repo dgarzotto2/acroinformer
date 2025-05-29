@@ -2,55 +2,66 @@
 
 import fitz  # PyMuPDF
 import hashlib
-import re
+from PyPDF2 import PdfReader
+from datetime import datetime
 
-def compute_sha256(file_bytes):
-    return hashlib.sha256(file_bytes).hexdigest()
-
-def extract_between(text, start, end):
-    try:
-        return text.split(start)[1].split(end)[0]
-    except:
-        return ""
-
-def extract_metadata(file_name, file_bytes):
-    doc = fitz.open(stream=file_bytes, filetype="pdf")
-    metadata = doc.metadata
-    xmp_block = None
-    for xref in range(doc.xref_length()):
-        try:
-            obj = doc.xref_object(xref)
-            if "<x:xmpmeta" in obj:
-                xmp_block = obj
-                break
-        except:
-            continue
-    doc_id, inst_id = None, None
-    if xmp_block:
-        doc_id_match = re.search(r"xmpMM:DocumentID=\"uuid:([^\"]+)\"", xmp_block)
-        inst_id_match = re.search(r"xmpMM:InstanceID=\"uuid:([^\"]+)\"", xmp_block)
-        if doc_id_match:
-            doc_id = f"uuid:{doc_id_match.group(1)}"
-        if inst_id_match:
-            inst_id = f"uuid:{inst_id_match.group(1)}"
-
-    form_fields = []
-    for xref in range(doc.xref_length()):
-        try:
-            obj = doc.xref_object(xref)
-            if "/FT /Tx" in obj and "/T (" in obj and "/V (" in obj:
-                name = extract_between(obj, "/T (", ")")
-                value = extract_between(obj, "/V (", ")")
-                form_fields.append({"name": name, "value": value})
-        except:
-            continue
-
-    return {
-        "filename": file_name,
-        "sha256": compute_sha256(file_bytes),
-        "creation_date": metadata.get("creationDate", "unknown"),
-        "mod_date": metadata.get("modDate", "unknown"),
-        "xmp_document_id": doc_id,
-        "xmp_instance_id": inst_id,
-        "form_fields": form_fields,
+def extract_metadata(file_path):
+    meta = {
+        "creation_time": None,
+        "modification_time": None,
+        "xmp_document_id": None,
+        "xmp_instance_id": None,
+        "acroform_fields": [],
+        "producer": None,
+        "title": None,
+        "author": None
     }
+
+    try:
+        reader = PdfReader(file_path)
+        doc_info = reader.metadata
+
+        meta["producer"] = doc_info.get('/Producer')
+        meta["title"] = doc_info.get('/Title')
+        meta["author"] = doc_info.get('/Author')
+
+        # AcroForm fields
+        if reader.trailer.get("/Root"):
+            acro_form = reader.trailer["/Root"].get("/AcroForm")
+            if acro_form and "/Fields" in acro_form:
+                fields = acro_form["/Fields"]
+                meta["acroform_fields"] = [str(f.get_object()) for f in fields]
+
+        # Dates
+        creation_date = doc_info.get('/CreationDate')
+        mod_date = doc_info.get('/ModDate')
+        if creation_date:
+            meta["creation_time"] = parse_pdf_date(creation_date)
+        if mod_date:
+            meta["modification_time"] = parse_pdf_date(mod_date)
+
+        # XMP metadata via PyMuPDF
+        with fitz.open(file_path) as doc:
+            xmp = doc.metadata
+            meta["xmp_document_id"] = xmp.get("xmp:DocumentID")
+            meta["xmp_instance_id"] = xmp.get("xmp:InstanceID")
+
+    except Exception as e:
+        meta["error"] = f"Metadata extraction failed: {str(e)}"
+
+    return meta
+
+def parse_pdf_date(d):
+    try:
+        if d.startswith("D:"):
+            d = d[2:]
+        return datetime.strptime(d[:14], "%Y%m%d%H%M%S").isoformat()
+    except Exception:
+        return d  # Fallback raw string
+
+def compute_sha256(file_path):
+    try:
+        with open(file_path, "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()
+    except Exception:
+        return None
