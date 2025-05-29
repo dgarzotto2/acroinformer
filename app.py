@@ -1,10 +1,11 @@
-import streamlit as st
+#!/usr/bin/env python3
 import os
+import streamlit as st
 from pdf_utils import extract_metadata
 
-def save_uploaded_file(uploaded_file) -> (str, bytes):
+def save_uploaded_file(uploaded_file):
     """
-    Save the uploaded file to /tmp and return its path and bytes.
+    Save the uploaded file under /tmp and return its path and raw bytes.
     """
     tmp_dir = "/tmp"
     os.makedirs(tmp_dir, exist_ok=True)
@@ -15,18 +16,21 @@ def save_uploaded_file(uploaded_file) -> (str, bytes):
     return file_path, file_bytes
 
 def main():
+    # Streamlit page configuration
     st.set_page_config(page_title="AcroInformer", layout="wide")
     st.title("AcroInformer")
-    st.write("Digital Forensic Document Examination")
+    st.write("**Digital Forensic Document Examination**")
 
+    # File uploader
     uploaded_file = st.file_uploader("Upload a PDF document", type=["pdf"])
     if not uploaded_file:
+        st.info("Please upload a PDF to begin analysis.")
         return
 
-    # Save file and read bytes
+    # Save file to disk and get bytes
     file_path, file_bytes = save_uploaded_file(uploaded_file)
 
-    # Extract metadata (now passing both path and bytes)
+    # Extract metadata (pass both path and bytes)
     metadata = extract_metadata(file_path, file_bytes)
 
     # Display metadata summary
@@ -40,8 +44,8 @@ def main():
     st.markdown(f"**Tamper Risk:** {metadata.get('tamper_risk', '—')}")
     st.markdown(f"**Signature Overlay Detected:** {'Yes' if metadata.get('signature_overlay_detected') else 'No'}")
 
-    # PDF preview / download
-    st.header("PDF Preview / Download")
+    # Provide download button for the original PDF
+    st.header("Download / Preview")
     st.download_button(
         label="Download PDF",
         data=file_bytes,
