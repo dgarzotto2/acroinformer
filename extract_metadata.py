@@ -1,73 +1,77 @@
 import hashlib
 import fitz  # PyMuPDF
-import PyPDF2
+from PyPDF2 import PdfReader
 import xml.etree.ElementTree as ET
 
+
 def extract_metadata(file_path, file_bytes):
+    # Compute SHA-256
     sha256 = hashlib.sha256(file_bytes).hexdigest()
-    result = {
+
+    # Load PDF with PyMuPDF
+    doc = fitz.open(stream=file_bytes, filetype="pdf")
+    pdf_version = doc.pdf_version
+
+    # Load PDF with PyPDF2 for metadata
+    reader = PdfReader(file_path)
+    info = reader.metadata
+
+    # Basic metadata
+    producer = info.get("/Producer", "")
+    creator = info.get("/Creator", "")
+    creation_date = info.get("/CreationDate", "")
+    mod_date = info.get("/ModDate", "")
+
+    # Check for signature
+    has_signature = any("/Sig" in str(field.get_object()) for field in reader.trailer.get("/Root", {}).get("/AcroForm", {}).get("/Fields", []) if hasattr(field, "get_object"))
+
+    # Check for AcroForm
+    has_acroform = "/AcroForm" in reader.trailer.get("/Root", {})
+
+    # Extract XMP Metadata
+    xmp_toolkit = ""
+    doc_id = ""
+    instance_id = ""
+    try:
+        xmp_xml = reader.xmp_metadata
+        if xmp_xml:
+            root = ET.fromstring(xmp_xml.get_data())
+            ns = {"x": "adobe:ns:meta/", "xmpMM": "http://ns.adobe.com/xap/1.0/mm/", "xmp": "http://ns.adobe.com/xap/1.0/"}
+            xmp_toolkit = root.find(".//x:xmpmeta", ns).attrib.get("x:xmptk", "")
+            doc_id_el = root.find(".//xmpMM:DocumentID", ns)
+            instance_id_el = root.find(".//xmpMM:InstanceID", ns)
+            if doc_id_el is not None:
+                doc_id = doc_id_el.text
+            if instance_id_el is not None:
+                instance_id = instance_id_el.text
+    except Exception:
+        pass
+
+    # Flag conditions
+    flags = []
+    if creation_date == mod_date:
+        flags.append("identical_timestamps")
+    if xmp_toolkit and "Adobe" in xmp_toolkit and not has_signature:
+        flags.append("no_signature_in_adobe_xmp")
+    if doc_id == instance_id:
+        flags.append("same_doc_and_instance_id")
+    if not has_acroform:
+        flags.append("no_acroform")
+    if has_signature:
+        flags.append("digital_signature_detected")
+
+    return {
         "filename": file_path.split("/")[-1],
         "sha256": sha256,
-        "producer": None,
-        "creator": None,
-        "creation_date": None,
-        "mod_date": None,
-        "xmp_toolkit": None,
-        "xmp_instance_id": None,
-        "xmp_document_id": None,
-        "has_acroform": False,
-        "has_signature": False,
-        "signature_type": "none"
+        "producer": producer,
+        "creator": creator,
+        "creation_date": creation_date,
+        "mod_date": mod_date,
+        "pdf_version": pdf_version,
+        "xmp_toolkit": xmp_toolkit,
+        "doc_id": doc_id,
+        "instance_id": instance_id,
+        "acroform": has_acroform,
+        "has_signature": has_signature,
+        "flags": flags
     }
-
-    # --- Classic PDF Metadata ---
-    try:
-        reader = PyPDF2.PdfReader(file_path)
-        info = reader.metadata or {}
-
-        result["producer"] = info.get("/Producer")
-        result["creator"] = info.get("/Creator")
-        result["creation_date"] = info.get("/CreationDate")
-        result["mod_date"] = info.get("/ModDate")
-
-        if "/AcroForm" in reader.trailer["/Root"]:
-            result["has_acroform"] = True
-            acro = reader.trailer["/Root"]["/AcroForm"]
-            if acro.get("/SigFlags") or acro.get("/Fields"):
-                result["has_signature"] = True
-                result["signature_type"] = "digital"
-    except Exception as e:
-        pass  # Allow fallback to PyMuPDF if PyPDF2 fails
-
-    # --- Signature Check with PyMuPDF (for visible overlays) ---
-    try:
-        doc = fitz.open(stream=file_bytes, filetype="pdf")
-        for page in doc:
-            blocks = page.get_text("dict")["blocks"]
-            for b in blocks:
-                if "image" in b.get("type", "") or "/Sig" in str(b):
-                    result["has_signature"] = True
-                    if result["signature_type"] == "none":
-                        result["signature_type"] = "image"
-    except Exception:
-        pass
-
-    # --- XMP Metadata Parsing ---
-    try:
-        doc = fitz.open(stream=file_bytes, filetype="pdf")
-        xmp = doc.metadata.get("xmp")
-        if xmp:
-            root = ET.fromstring(xmp)
-            for elem in root.iter():
-                tag = elem.tag.lower()
-                text = elem.text
-                if tag.endswith("xmp:creatortoolkit") or "xmptoolkit" in tag:
-                    result["xmp_toolkit"] = text
-                elif tag.endswith("instanceid"):
-                    result["xmp_instance_id"] = text
-                elif tag.endswith("documentid"):
-                    result["xmp_document_id"] = text
-    except Exception:
-        pass
-
-    return result
