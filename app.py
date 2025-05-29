@@ -1,60 +1,61 @@
 import streamlit as st
 import os
+import hashlib
 import tempfile
 from extract_metadata import extract_metadata
 
-st.set_page_config(page_title="AcroInformer – PDF Forensic Metadata Scanner", layout="wide")
-
-st.title("📄 AcroInformer – PDF Forensic Metadata Scanner")
-st.markdown("Upload at least two PDF documents to begin forensic comparison.")
-
-uploaded_files = st.file_uploader(
-    "Select two or more PDF files for analysis",
-    type=["pdf"],
-    accept_multiple_files=True
+# Set page configuration
+st.set_page_config(
+    page_title="AcroForm Informer",
+    layout="centered"
 )
 
-if not uploaded_files or len(uploaded_files) < 2:
-    st.warning("Please upload at least two PDF files to begin.")
-    st.stop()
+st.title("AcroForm Informer")
+st.markdown("Upload **two or more PDF files** to perform a forensic comparison based on metadata, AcroForm structures, XMP toolkit signatures, and timestamp analysis.")
 
-temp_dir = tempfile.mkdtemp(dir="/tmp")
-file_map = {}
+uploaded_files = st.file_uploader("Upload PDF files", type=["pdf"], accept_multiple_files=True)
 
-for uploaded in uploaded_files:
-    file_path = os.path.join(temp_dir, uploaded.name)
-    file_bytes = uploaded.read()
-    with open(file_path, "wb") as f:
-        f.write(file_bytes)
-    file_map[uploaded.name] = {
-        "path": file_path,
-        "bytes": file_bytes
-    }
+if uploaded_files and len(uploaded_files) >= 2:
+    temp_dir = tempfile.mkdtemp(dir="/tmp")
+    file_map = {}
 
-st.success(f"✅ {len(file_map)} PDF files successfully uploaded and saved.")
-st.markdown("---")
+    for uploaded in uploaded_files:
+        file_path = os.path.join(temp_dir, uploaded.name)
+        with open(file_path, "wb") as f:
+            f.write(uploaded.read())
+        file_map[uploaded.name] = file_path
 
-results = []
+    metadata_list = []
 
-for fname, data in file_map.items():
-    try:
-        metadata = extract_metadata(data["path"], data["bytes"])
-        results.append(metadata)
-    except Exception as e:
-        st.error(f"❌ Failed to extract metadata from {fname}: {str(e)}")
+    for fname, fpath in file_map.items():
+        with open(fpath, "rb") as f:
+            fbytes = f.read()
 
-# Display extracted metadata
-for r in results:
-    st.subheader(f"📌 {r.get('filename', 'Unnamed')}")
-    st.code(f"SHA-256: {r.get('sha256', '—')}", language="bash")
-    st.markdown(f"**Producer:** {r.get('producer', '—')}")
-    st.markdown(f"**Creator:** {r.get('creator', '—')}")
-    st.markdown(f"**Creation Date:** {r.get('creation_date', '—')}")
-    st.markdown(f"**Modification Date:** {r.get('mod_date', '—')}")
-    st.markdown(f"**XMP Toolkit:** {r.get('xmp_toolkit', '—')}")
-    st.markdown(f"**XMP Instance ID:** {r.get('xmp_instance_id', '—')}")
-    st.markdown(f"**XMP Document ID:** {r.get('xmp_document_id', '—')}")
-    st.markdown(f"**Has AcroForm Fields:** {r.get('has_acroform', False)}")
-    st.markdown(f"**Has Digital Signature:** {r.get('has_signature', False)}")
-    st.markdown(f"**Signature Type:** {r.get('signature_type', '—')}")
-    st.markdown("---")
+        try:
+            metadata = extract_metadata(fpath, fbytes)
+            metadata_list.append(metadata)
+        except Exception as e:
+            st.error(f"Failed to extract metadata from {fname}: {e}")
+
+    if metadata_list:
+        st.header("Metadata Comparison Results")
+
+        for r in metadata_list:
+            st.subheader(f"{r['filename']}")
+            st.code(f"SHA-256: {r['sha256']}", language="bash")
+            st.markdown(f"**Producer:** {r['producer'] or '—'}")
+            st.markdown(f"**Creator:** {r['creator'] or '—'}")
+            st.markdown(f"**Creation Date:** {r['creation_date'] or '—'}")
+            st.markdown(f"**Modification Date:** {r['mod_date'] or '—'}")
+            st.markdown(f"**PDF Version:** {r['pdf_version'] or '—'}")
+            st.markdown(f"**XMP Toolkit:** {r['xmp_toolkit'] or '—'}")
+            st.markdown(f"**Document ID:** {r['doc_id'] or '—'}")
+            st.markdown(f"**Instance ID:** {r['instance_id'] or '—'}")
+            st.markdown(f"**AcroForm Detected:** {'Yes' if r['acroform'] else 'No'}")
+            st.markdown(f"**Digital Signature Present:** {'Yes' if r['has_signature'] else 'No'}")
+            st.markdown(f"**Key Flags:** {', '.join(r['flags']) if r['flags'] else 'None'}")
+
+        st.success("Metadata extraction and comparison complete.")
+
+else:
+    st.info("Please upload **at least two** PDF files to begin comparison.")
