@@ -3,18 +3,34 @@
 import zipfile
 import os
 import tempfile
-import shutil
+import yaml
+from affidavit_writer import write_affidavit
+from reportlab.lib.utils import ImageReader
 
-def bundle_export(evidence_files, output_zip_path="forensic_export.zip"):
+def create_export_bundle(filename, sha256, metadata, findings, decoded_text, yaml_data, output_zip_path):
     with tempfile.TemporaryDirectory() as tmpdir:
-        for label, src_path in evidence_files.items():
-            if src_path and os.path.exists(src_path):
-                dst_path = os.path.join(tmpdir, os.path.basename(src_path))
-                shutil.copy(src_path, dst_path)
+        # Save YAML
+        yaml_path = os.path.join(tmpdir, f"{filename}_entities.yaml")
+        with open(yaml_path, "w", encoding="utf-8") as f:
+            yaml.dump(yaml_data, f, sort_keys=False, allow_unicode=True)
 
-        with zipfile.ZipFile(output_zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
-            for root, _, files in os.walk(tmpdir):
-                for file in files:
-                    zipf.write(os.path.join(root, file), file)
+        # Save decoded text
+        decoded_path = os.path.join(tmpdir, f"{filename}_decoded.txt")
+        with open(decoded_path, "w", encoding="utf-8") as f:
+            f.write(decoded_text)
 
-    return output_zip_path
+        # Save affidavit
+        affidavit_path = os.path.join(tmpdir, f"{filename}_affidavit.pdf")
+        write_affidavit(
+            output_path=affidavit_path,
+            metadata=metadata,
+            filename=filename,
+            sha256=sha256,
+            findings=findings,
+        )
+
+        # Create ZIP
+        with zipfile.ZipFile(output_zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.write(yaml_path, arcname=os.path.basename(yaml_path))
+            zf.write(decoded_path, arcname=os.path.basename(decoded_path))
+            zf.write(affidavit_path, arcname=os.path.basename(affidavit_path))
