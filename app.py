@@ -1,47 +1,54 @@
 import streamlit as st
 import tempfile
 import os
+import zipfile
+import datetime
 from metadata import extract_metadata
 
-st.set_page_config(page_title="AcroInformer - PDF Metadata Forensics", layout="wide")
+st.set_page_config(page_title="AcroInformer Forensic Scanner", layout="centered")
 
-def main():
-    st.title("📄 AcroInformer: PDF Metadata & Obfuscation Scan")
+st.title("📄 AcroInformer: PDF Forensic Risk Scanner")
+st.markdown("Upload a suspected PDF file to extract hidden metadata, CID fonts, JavaScript, and obfuscation techniques.")
 
-    uploaded_file = st.file_uploader("Upload a PDF for forensic metadata analysis", type=["pdf"])
-    if uploaded_file is None:
-        st.info("Please upload a PDF to begin.")
-        return
+uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
 
+def save_result_to_zip(results, output_path):
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    zip_path = os.path.join(output_path, f"acroinformer_results_{timestamp}.zip")
+    with zipfile.ZipFile(zip_path, "w") as zipf:
+        result_file = os.path.join(output_path, "result.txt")
+        with open(result_file, "w") as f:
+            for k, v in results.items():
+                f.write(f"{k}: {v}\n")
+        zipf.write(result_file, arcname="result.txt")
+    return zip_path
+
+if uploaded_file:
     with tempfile.TemporaryDirectory() as temp_dir:
-        file_path = os.path.join(temp_dir, uploaded_file.name)
-        with open(file_path, "wb") as f:
-            f.write(uploaded_file.getbuffer())
+        pdf_path = os.path.join(temp_dir, uploaded_file.name)
+        with open(pdf_path, "wb") as f:
+            f.write(uploaded_file.read())
 
-        st.success("File uploaded successfully. Running analysis...")
+        st.info("⏳ Scanning PDF for hidden metadata...")
+        r = extract_metadata(pdf_path)
 
-        results = extract_metadata(file_path)
+        st.success("✅ Scan complete.")
+        st.markdown("### Results Summary")
+        st.markdown(f"- **CID Font Detected:** {'Yes' if r['cid_font_detected'] else 'No'}")
+        st.markdown(f"- **XFA Forms Detected:** {'Yes' if r['xfa_found'] else 'No'}")
+        st.markdown(f"- **Launch Action Present:** {'Yes' if r['launch_action'] else 'No'}")
+        st.markdown(f"- **AcroForm Present:** {'Yes' if r['acroform_detected'] else 'No'}")
+        st.markdown(f"- **Hidden Library Usage:** {'Yes' if r['hidden_lib_usage'] else 'No'}")
+        st.markdown("### Fonts Used:")
+        st.code("\n".join(r["fonts_used"]) if r["fonts_used"] else "None")
+        if r["embedded_js"]:
+            st.markdown("### Embedded JavaScript:")
+            st.code("\n".join(r["embedded_js"]))
+        else:
+            st.markdown("### Embedded JavaScript: None")
 
-        st.subheader("🔍 Metadata Summary")
-        st.markdown(f"- **Title:** {results.get('title') or 'Unknown'}")
-        st.markdown(f"- **Author:** {results.get('author') or 'Unknown'}")
-        st.markdown(f"- **Producer:** {results.get('producer') or 'Unknown'}")
-        st.markdown(f"- **Creation Date:** {results.get('created') or 'Unknown'}")
-        st.markdown(f"- **Modification Date:** {results.get('modified') or 'Unknown'}")
-
-        st.subheader("🛑 Obfuscation & Threat Flags")
-        st.markdown(f"- **Hidden Library Usage:** {'Yes' if results.get('hidden_lib_usage') else 'No'}")
-        st.markdown(f"- **XFA Detected:** {'Yes' if results.get('xfa_found') else 'No'}")
-        st.markdown(f"- **CID Font Present:** {'Yes' if results.get('cid_fonts_present') else 'No'}")
-        st.markdown(f"- **Launch Action Present:** {'Yes' if results.get('launch_action_found') else 'No'}")
-
-        st.subheader("🔐 Signature & Structure")
-        st.markdown(f"- **AcroForm Present:** {'Yes' if results.get('acroform') else 'No'}")
-        st.markdown(f"- **XMP Toolkit:** {results.get('xmp_toolkit') or 'None'}")
-        st.markdown(f"- **ByteRange Present:** {'Yes' if results.get('byte_range') else 'No'}")
-
-        st.subheader("🧬 Internal Metadata Dump")
-        st.json(results)
-
-if __name__ == "__main__":
-    main()
+        st.markdown("---")
+        st.markdown("### 🔐 Download Full Report")
+        zip_file = save_result_to_zip(r, temp_dir)
+        with open(zip_file, "rb") as f:
+            st.download_button("Download Forensic Report (.zip)", f, file_name=os.path.basename(zip_file))
