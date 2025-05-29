@@ -2,10 +2,9 @@
 
 import streamlit as st
 import os
-import hashlib
-import shutil
 import tempfile
-
+import shutil
+import hashlib
 from pdf_utils import extract_metadata
 from scoring_engine import score_documents
 from affidavit_writer import generate_affidavit
@@ -14,7 +13,7 @@ from zip_exporter import create_zip_bundle
 
 st.set_page_config(page_title="Acroform Informer", layout="wide")
 
-# Dark theme override
+# Dark theme UI override
 st.markdown("""
     <style>
     body {
@@ -40,12 +39,12 @@ st.markdown("""
 This system detects and reports forensic similarities between PDF files. It generates court-ready affidavits detailing metadata matches, AcroForm reuse, and potential flattening or stealth editing.
 """)
 
-# File uploader
+# Upload prompt
 uploaded_files = st.file_uploader("Upload 2 or more PDF files for analysis", type="pdf", accept_multiple_files=True)
 
 if uploaded_files and len(uploaded_files) >= 2:
-    # Secure temporary directory for Streamlit Cloud
-    safe_tmp = os.path.join(os.getcwd(), "temp_runtime")
+    # Use safe temp directory on Streamlit Cloud
+    safe_tmp = os.path.join("/tmp", "acroinformer_temp")
     os.makedirs(safe_tmp, exist_ok=True)
     temp_dir = tempfile.mkdtemp(dir=safe_tmp)
 
