@@ -1,37 +1,48 @@
-# pdf_utils.py
-
-import hashlib
+import fitz  # PyMuPDF
 from PyPDF2 import PdfReader
-from typing import Dict, Any
+import hashlib
+import re
 
-def extract_metadata(file_path: str, file_bytes: bytes) -> Dict[str, Any]:
-    result = {
-        "sha256": hashlib.sha256(file_bytes).hexdigest(),
-        "file_size": len(file_bytes),
-        "page_count": 0,
-        "acroform_present": False,
-        "xfa_present": False,
-        "metadata": {},
-        "errors": [],
-    }
+def extract_metadata(file_path, file_bytes):
+    metadata = {}
+
+    # SHA256 Hash
+    metadata["sha256"] = hashlib.sha256(file_bytes).hexdigest()
 
     try:
         reader = PdfReader(file_path)
-        result["page_count"] = len(reader.pages)
+        metadata["num_pages"] = len(reader.pages)
+        metadata["pdf_version"] = reader.pdf_header_version
 
-        if "/AcroForm" in reader.trailer["/Root"]:
-            result["acroform_present"] = True
-            af = reader.trailer["/Root"]["/AcroForm"]
-            if af.get("/XFA"):
-                result["xfa_present"] = True
+        # Document Info
+        doc_info = reader.metadata or {}
+        metadata["title"] = doc_info.get("/Title", "")
+        metadata["author"] = doc_info.get("/Author", "")
+        metadata["producer"] = doc_info.get("/Producer", "")
+        metadata["creator"] = doc_info.get("/Creator", "")
+        metadata["created"] = doc_info.get("/CreationDate", "")
+        metadata["modified"] = doc_info.get("/ModDate", "")
+        metadata["xmp_metadata"] = reader.xmp_metadata
 
-        doc_info = reader.metadata
-        if doc_info:
-            result["metadata"] = {
-                k.replace("/", ""): v for k, v in doc_info.items() if isinstance(k, str)
-            }
-
+        # Form fields
+        try:
+            metadata["has_acroform"] = "/AcroForm" in reader.trailer["/Root"]
+            metadata["acroform_fields"] = list(reader.get_fields() or {}).keys()
+        except:
+            metadata["has_acroform"] = False
+            metadata["acroform_fields"] = []
     except Exception as e:
-        result["errors"].append(str(e))
+        metadata["error"] = f"PyPDF2 failed: {str(e)}"
 
-    return result
+    # Render using MuPDF to double check fonts and stream content
+    try:
+        doc = fitz.open(stream=file_bytes, filetype="pdf")
+        metadata["fonts"] = list(set([
+            x["font"] for page in doc for x in page.get_text("dict")["blocks"]
+            if "lines" in x for line in x["lines"] for span in line["spans"]
+        ]))
+    except Exception as e:
+        metadata["fonts"] = []
+        metadata["fitz_error"] = str(e)
+
+    return metadata
