@@ -1,34 +1,33 @@
 import openai
+import os
 
-def generate_fraud_summary(results, api_key):
-    openai.api_key = api_key
+def generate_gpt_summary(metadata: dict) -> str:
+    openai.api_key = os.environ.get("OPENAI_API_KEY") or \
+                     (st.secrets["openai_api_key"] if "openai_api_key" in st.secrets else None)
 
-    metadata_blocks = []
-    for r in results:
-        block = f"""
-Filename: {r['filename']}
-SHA-256: {r['sha256']}
-Producer: {r['producer']}
-Creator: {r['creator']}
-Created: {r['creation_date']}
-Modified: {r['mod_date']}
-Toolkit: {r['xmp_toolkit']}
-Signature: {r['signature_type']}
-Form Fields: {', '.join(r['form_fields']) if r['form_fields'] else 'None'}
-        """.strip()
-        metadata_blocks.append(block)
+    prompt = f"""
+Analyze the following PDF metadata and provide a forensic opinion. Determine if the document is likely authentic, modified, or synthetic. Highlight any red flags.
 
-    prompt = (
-        "You are a forensic PDF expert. Analyze the following metadata from multiple PDFs. "
-        "Identify anomalies, mass production indicators, signature inconsistencies, toolkit reuse, or signs of document tampering.\n\n"
-        + "\n\n---\n\n".join(metadata_blocks)
-        + "\n\nGenerate a summary that highlights any evidence of fraud, synthetic generation, or post-filing edits."
-    )
+Metadata:
+- Producer: {metadata.get('producer')}
+- Creator: {metadata.get('creator')}
+- PDF Toolkit: {metadata.get('toolkit')}
+- XMP Toolkit: {metadata.get('xmp_toolkit')}
+- Creation Date: {metadata.get('creation_date')}
+- Modification Date: {metadata.get('mod_date')}
+- AcroForm Present: {metadata.get('has_acroform')}
+- Signature Field Present: {metadata.get('has_signature_field')}
+- Tamper Risk: {metadata.get('tamper_risk')}
+"""
 
     response = openai.ChatCompletion.create(
         model="gpt-4",
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=800
+        messages=[
+            {"role": "system", "content": "You are a digital document forensic analyst."},
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0.2,
+        max_tokens=500
     )
 
-    return response['choices'][0]['message']['content']
+    return response['choices'][0]['message']['content'].strip()
