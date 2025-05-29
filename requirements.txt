@@ -1,5 +1,12 @@
- streamlit==1.32.0
- PyPDF2==3.0.0
- cryptography==41.0.0
- click==8.1.3
- pikepdf==8.3.2
+# Force a NumPy version with Linux wheels on Python 3.13
+numpy==1.25.4
+
+# Core app
+streamlit==1.32.0
+PyPDF2==3.0.0
+cryptography==41.0.0
+click==8.1.3
+pikepdf==8.3.2
+
+# (Optional) for CI/dev testing only—move to dev-requirements.txt if you like
+pytest==7.2.2
