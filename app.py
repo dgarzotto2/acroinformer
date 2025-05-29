@@ -1,66 +1,75 @@
+import os
 import streamlit as st
 import tempfile
-import os
-from metadata_comparator import extract_metadata
+from utils.extractor import extract_metadata
+from utils.gpt_interpreter import run_gpt_analysis
+import openai
 
-st.set_page_config(page_title="AcroInformer", layout="wide")
+# Set up OpenAI from Streamlit secrets
+openai.api_key = st.secrets["openai_api_key"]
 
-st.title("📄 AcroInformer – Forensic Metadata Comparator")
-
-st.markdown(
-    """
-    Upload two or more PDF files to compare their embedded metadata, XMP toolkit versions, 
-    creation/modification timestamps, and digital fingerprinting. This tool performs a chain-of-custody-safe, 
-    read-only scan to detect synthetic or mass-produced document traits.
-    """
+st.set_page_config(
+    page_title="AcroInformer – Forensic PDF Metadata Examiner",
+    layout="wide"
 )
 
-uploaded_files = st.file_uploader("Upload PDF files", type="pdf", accept_multiple_files=True)
+st.title("AcroInformer – PDF Metadata & Signature Forensics")
 
-if uploaded_files and len(uploaded_files) >= 2:
-    with st.spinner("Analyzing PDFs..."):
-        temp_dir = tempfile.mkdtemp(dir="/tmp")
-        results = []
+st.markdown("""
+Upload two or more PDF documents to compare:
+- Metadata consistency (creation, modification, XMP IDs)
+- AcroForm structure, reuse, and flattening
+- Signature validation (digital or static overlays)
+- Potential signs of synthetic generation or tampering
+""")
 
-        for uploaded in uploaded_files:
-            fname = uploaded.name
-            fbytes = uploaded.read()
-            fpath = os.path.join(temp_dir, fname)
+uploaded_files = st.file_uploader(
+    "Select PDF files", type="pdf", accept_multiple_files=True
+)
 
-            with open(fpath, "wb") as f:
-                f.write(fbytes)
+if not uploaded_files or len(uploaded_files) < 2:
+    st.warning("Please upload at least 2 PDF files for comparison.")
+    st.stop()
 
-            try:
-                result = extract_metadata(fpath)
-                results.append(result)
-            except Exception as e:
-                st.error(f"Error processing {fname}: {str(e)}")
+with st.spinner("Processing uploaded PDFs..."):
+    temp_dir = tempfile.mkdtemp(dir="/tmp")
+    file_map = {}
 
-    st.success(f"{len(results)} files analyzed.")
-    st.divider()
+    for uploaded in uploaded_files:
+        file_path = os.path.join(temp_dir, uploaded.name)
+        with open(file_path, "wb") as f:
+            f.write(uploaded.read())
+        file_map[uploaded.name] = file_path
 
-    for r in results:
-        st.subheader(f"📌 {r['filename']}")
-        st.code(f"SHA-256: {r['sha256']}", language="bash")
-        st.markdown(f"**Producer:** {r['producer'] or '—'}")
-        st.markdown(f"**Creator:** {r['creator'] or '—'}")
-        st.markdown(f"**Creation Date:** {r['creation_date'] or '—'}")
-        st.markdown(f"**Modification Date:** {r['mod_date'] or '—'}")
-        st.markdown(f"**XMP Toolkit:** {r['xmp_toolkit'] or '—'}")
-        st.markdown(f"**Instance ID:** `{r['instance_id'] or '—'}`")
-        st.markdown(f"**Document ID:** `{r['document_id'] or '—'}`")
+    metadata_list = []
+    for fname, fpath in file_map.items():
+        with open(fpath, "rb") as f:
+            fbytes = f.read()
+        try:
+            meta = extract_metadata(fpath, fbytes)
+            metadata_list.append(meta)
+        except Exception as e:
+            st.error(f"Failed to extract metadata from {fname}: {str(e)}")
+            continue
 
-        if r["metadata_flags"]:
-            st.warning("⚠️ Forensic Flags:")
-            for flag in r["metadata_flags"]:
-                st.markdown(f"- {flag}")
-        else:
-            st.success("✅ No anomalies detected in metadata.")
+if not metadata_list:
+    st.error("No valid metadata could be extracted from the uploaded PDFs.")
+    st.stop()
 
-        with st.expander("🔍 Raw XMP Packet", expanded=False):
-            st.code(r["raw_xmp"] or "None found", language="xml")
+st.success(f"Successfully extracted metadata from {len(metadata_list)} PDF(s).")
 
-        st.divider()
+# Display metadata
+for meta in metadata_list:
+    st.subheader(f"📄 {meta.get('filename', 'Unknown')}")
+    st.json(meta)
 
-else:
-    st.info("Please upload at least two PDF files to begin comparison.")
+# GPT Forensic Summary (if available)
+if openai.api_key:
+    st.markdown("---")
+    st.header("🧠 GPT-Powered Forensic Interpretation")
+    with st.spinner("Interpreting forensic patterns using GPT..."):
+        try:
+            gpt_summary = run_gpt_analysis(metadata_list)
+            st.markdown(gpt_summary)
+        except Exception as e:
+            st.error(f"GPT analysis failed: {str(e)}")
