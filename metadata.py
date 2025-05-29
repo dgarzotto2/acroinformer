@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 def _find_known_libs(raw: bytes) -> bool:
     """
-    Scan raw PDF bytes (and inside Flate‐decoded streams) for footprints of
+    Scan raw PDF bytes (and inside Flate streams) for footprints of
     programmatic PDF libraries:
       - iText / Lowagie / AGPL
       - PDFBox / Apache PDFBox
@@ -28,7 +28,6 @@ def _find_known_libs(raw: bytes) -> bool:
         if re.search(pat, raw, re.IGNORECASE):
             return True
 
-    # Also inspect Flate streams
     for m in re.finditer(b"stream(.*?)endstream", raw, re.DOTALL):
         chunk = m.group(1).strip(b"\r\n")
         try:
@@ -48,7 +47,7 @@ def extract_metadata(file_path: str, file_bytes: bytes) -> Dict[str, Any]:
       - Adobe XMP Toolkit
       - AcroForm presence & /Sig fields
       - Signature-overlay annotations
-      - Hidden PDF-library usage (iText, PDFBox, BFO, ABCpdf, etc.)
+      - Hidden PDF-library usage
     """
     reader = PdfReader(file_path)
     info     = reader.metadata or {}
@@ -64,16 +63,43 @@ def extract_metadata(file_path: str, file_bytes: bytes) -> Dict[str, Any]:
         pass
 
     # Parse XMP Toolkit
-    xmp_toolkit = parse_xmp_toolkit(raw_xmp) if raw_xmp else None
+    try:
+        xmp_toolkit = parse_xmp_toolkit(raw_xmp)
+    except Exception:
+        xmp_toolkit = None
 
-    # AcroForm & signature-field detection
-    root         = reader.trailer.get("/Root", {})
-    has_acroform = "/AcroForm" in root
+    # Dereference /Root to a Python dict
+    root_ref = reader.trailer.get("/Root")
+    if hasattr(root_ref, "get_object"):
+        try:
+            root = root_ref.get_object()
+        except Exception:
+            root = {}
+    else:
+        root = root_ref or {}
+
+    # Detect AcroForm & signature fields
+    has_acroform = False
     has_sigfield = False
-    if has_acroform:
-        for fld in root["/AcroForm"].get("/Fields", []) or []:
+    acro_dict = None
+
+    if "/AcroForm" in root:
+        has_acroform = True
+        acro_ref = root.get("/AcroForm")
+        # dereference AcroForm
+        if hasattr(acro_ref, "get_object"):
             try:
-                if fld.get_object().get("/FT") == "/Sig":
+                acro_dict = acro_ref.get_object()
+            except Exception:
+                acro_dict = {}
+        else:
+            acro_dict = acro_ref or {}
+
+        fields = acro_dict.get("/Fields", []) or []
+        for fld in fields:
+            try:
+                obj = fld.get_object() if hasattr(fld, "get_object") else fld
+                if obj.get("/FT") == "/Sig":
                     has_sigfield = True
                     break
             except Exception:
@@ -82,9 +108,10 @@ def extract_metadata(file_path: str, file_bytes: bytes) -> Dict[str, Any]:
     # Signature-overlay detection (/Stamp or appearance streams)
     signature_overlay = False
     for page in reader.pages:
-        for annot in page.get("/Annots", []) or []:
+        annots = page.get("/Annots", []) or []
+        for annot in annots:
             try:
-                obj = annot.get_object()
+                obj = annot.get_object() if hasattr(annot, "get_object") else annot
                 if obj.get("/Subtype") in ("/Stamp", "/Sig") or obj.get("/AP"):
                     signature_overlay = True
                     break
@@ -93,7 +120,7 @@ def extract_metadata(file_path: str, file_bytes: bytes) -> Dict[str, Any]:
         if signature_overlay:
             break
 
-    # Core metadata
+    # Core metadata fields
     producer      = info.get("/Producer")
     creator       = info.get("/Creator")
     creation_date = info.get("/CreationDate")
