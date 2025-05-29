@@ -1,24 +1,33 @@
-# suppression_detector.py
+# utils/suppression_detector.py
 
-import fitz
+import re
 
-def detect_suppression_flags(file_path):
+def detect_suppression_patterns(text: str) -> list:
+    """
+    Detects known suppression and obfuscation patterns in a text block.
+    Returns a list of flags.
+    """
     flags = []
-    try:
-        doc = fitz.open(file_path)
-        for page in doc:
-            text = page.get_text()
-            if "Preview" in text and len(text.strip()) < 10:
-                flags.append("Visual placeholder detected: only 'Preview' text visible.")
-            if page.rotation in [90, 180, 270]:
-                flags.append(f"Page rotated {page.rotation} degrees – may indicate raster overlay.")
 
-        for i in range(len(doc)):
-            img_list = doc.get_page_images(i)
-            if img_list and not doc[i].get_text().strip():
-                flags.append(f"Page {i+1} is image-only – possible raster suppression.")
+    if not text.strip():
+        flags.append("empty_block")
 
-    except Exception as e:
-        flags.append(f"Suppression check error: {e}")
+    if "Preview" in text and len(text.strip()) < 40:
+        flags.append("preview_only")
+
+    if re.search(r"/CID|CIDFont|ToUnicode|CMap", text, re.IGNORECASE):
+        flags.append("cid_font_marker")
+
+    if "\u200b" in text:
+        flags.append("zero_width_space")
+
+    if re.search(r"\.\.\.\d{4}", text):
+        flags.append("masked_account")
+
+    if re.search(r"(Tehran|FATA|Mashreq|Philippines)", text, re.IGNORECASE):
+        flags.append("foreign_route")
+
+    if re.search(r"\b(?:Name|Amount|Parcel|Trust)\b", text, re.IGNORECASE) and len(text.strip()) < 50:
+        flags.append("placeholder_terms_only")
 
     return flags
