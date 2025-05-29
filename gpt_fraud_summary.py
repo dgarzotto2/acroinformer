@@ -1,67 +1,69 @@
 # gpt_fraud_summary.py
 
 import openai
+import json
 import os
-import time
 
-def generate_fraud_summary(blocks, metadata, cid_flags=None, xfa_flags=None, raster_flags=None):
+from utils.utils import summarize_entities_for_gpt
+
+def generate_fraud_summary(entities, metadata, filename, suppression_flags=None, license_flags=None, batch_duplicates=None):
+    """
+    Generates a GPT-based fraud risk summary.
+    """
+
     openai.api_key = os.getenv("OPENAI_API_KEY")
-    if not openai.api_key:
-        raise ValueError("OpenAI API key not set. Please set OPENAI_API_KEY environment variable.")
 
-    context = []
-
-    # Aggregate blocks and metadata for context
-    for i, block in enumerate(blocks):
-        block_text = block.get("text", "").strip()
-        source = block.get("source", f"Block {i}")
-        if block_text:
-            context.append(f"### {source}\n{block_text}")
-
-    if not context:
-        return {"summary": "❌ No text content available for GPT analysis."}
-
-    document_context = "\n\n".join(context[:5])  # Limit to first 5 blocks to stay within token bounds
-    fraud_clues = []
-
-    # Detection signals
-    if cid_flags:
-        fraud_clues.append("CID glyph suppression detected")
-    if xfa_flags:
-        fraud_clues.append("XFA overlays detected")
-    if raster_flags:
-        fraud_clues.append("Raster-only content")
-    if metadata.get("producer") in ["ABCpdf", "iText", "BFO"]:
-        fraud_clues.append(f"Generated with obfuscation-prone library: {metadata.get('producer')}")
-
-    # Construct GPT prompt
-    prompt = f"""
-You are a forensic document auditor reviewing potential document fraud.
-
-Below is content extracted from a suspicious PDF. Analyze the content for signs of fraud, placeholder names, missing Unicode maps, CID font suppression, and suppressed parties or amounts.
-
-Document Forensic Clues:
-- {'; '.join(fraud_clues) if fraud_clues else 'None noted'}
-
-Content Sample:
-{document_context}
-
-Instructions:
-- Identify any placeholders (e.g., "John Sample", missing names, blank fields).
-- Mention if CID font mapping appears to mask real names.
-- Flag any financial terms, roles, or entities that are unusually vague.
-- Include any indicators that the document was auto-generated or flattened post-signature.
-
-Respond in clear bullet points.
-"""
+    prompt = build_prompt(entities, metadata, filename, suppression_flags, license_flags, batch_duplicates)
 
     try:
         response = openai.ChatCompletion.create(
             model="gpt-4",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=600,
-            temperature=0.2
+            messages=[
+                {"role": "system", "content": "You are a forensic PDF fraud analyst."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.4,
+            max_tokens=700
         )
-        return {"summary": response["choices"][0]["message"]["content"]}
+        return response['choices'][0]['message']['content']
     except Exception as e:
-        return {"summary": f"⚠️ GPT summary generation failed: {str(e)}"}
+        return f"⚠️ GPT Error: {str(e)}"
+
+def build_prompt(entities, metadata, filename, suppression_flags=None, license_flags=None, batch_duplicates=None):
+    """
+    Constructs the GPT prompt with context-aware flags.
+    """
+
+    lines = []
+    lines.append(f"Analyze the following decoded PDF evidence from `{filename}`.")
+
+    if suppression_flags:
+        lines.append("\n**Suppression flags detected:**")
+        for flag in suppression_flags:
+            lines.append(f"- {flag}")
+
+    if license_flags:
+        lines.append("\n**License risk detected:**")
+        for flag in license_flags:
+            lines.append(f"- {flag}")
+
+    if batch_duplicates:
+        lines.append("\n**Duplicate metadata across documents:**")
+        for dup_flag in batch_duplicates:
+            lines.append(f"- {dup_flag}")
+
+    lines.append("\n---\n**Entities Extracted:**")
+    lines.append(summarize_entities_for_gpt(entities))
+
+    if metadata:
+        lines.append("\n---\n**Document Metadata:**")
+        lines.append(json.dumps(metadata, indent=2))
+
+    lines.append("\n---\nGenerate a fraud summary highlighting:")
+    lines.append("- CID font masking or missing Unicode maps")
+    lines.append("- AGPL/GPL licensing implications")
+    lines.append("- Signs of synthetic document generation")
+    lines.append("- Metadata reuse across documents")
+    lines.append("- Final rating of fraud risk (Low, Medium, High)")
+
+    return "\n".join(lines)
