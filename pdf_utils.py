@@ -65,3 +65,4 @@ def compute_sha256(file_path):
             return hashlib.sha256(f.read()).hexdigest()
     except Exception:
         return None
+        
