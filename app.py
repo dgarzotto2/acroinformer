@@ -1,61 +1,78 @@
-# /mount/src/acroinformer/app.py
-
 import streamlit as st
 import tempfile
+import os
 from metadata import extract_metadata
 
+st.set_page_config(page_title="AcroInformer", layout="centered")
+st.title("📄 PDF Metadata & Tampering Risk Audit")
+
 def main():
-    st.set_page_config(page_title="AcroInformer – PDF Metadata Analyzer", layout="centered")
-    st.title("AcroInformer")
-    st.subheader("PDF Metadata & Tampering Risk Audit")
+    st.info("Upload any PDF suspected of manipulation, embedded JavaScript, XFA overlays, or CID font suppression.")
 
     uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
-
     if uploaded_file:
         with tempfile.TemporaryDirectory() as temp_dir:
-            file_path = f"{temp_dir}/{uploaded_file.name}"
+            file_path = os.path.join(temp_dir, uploaded_file.name)
             with open(file_path, "wb") as f:
-                f.write(uploaded_file.read())
+                f.write(uploaded_file.getvalue())
 
-            st.markdown("### 🔍 Analysis Results")
-            try:
-                r = extract_metadata(file_path)
-            except Exception as e:
-                st.error(f"Metadata extraction failed: {e}")
-                return
+            st.success(f"✅ File loaded: {uploaded_file.name}")
+            st.markdown("---")
 
-            if not isinstance(r, dict):
-                st.warning("No metadata returned or unexpected format.")
-                return
+            r = extract_metadata(file_path)
 
-            st.markdown(f"- **CID Fonts Detected:** {'Yes' if r.get('cid_font_detected') else 'No'}")
-            st.markdown(f"- **XFA Forms Present:** {'Yes' if r.get('xfa_found') else 'No'}")
-            st.markdown(f"- **AcroForm Structure:** {'Yes' if r.get('acroform_detected') else 'No'}")
-            st.markdown(f"- **LaunchAction Trigger:** {'Yes' if r.get('launch_action') else 'No'}")
-            st.markdown(f"- **Hidden Library Usage:** {'Yes' if r.get('hidden_lib_usage') else 'No'}")
-            st.markdown(f"- **ByteRange Mismatch:** {'Yes' if r.get('byte_range_mismatch') else 'No'}")
-            st.markdown(f"- **Overlays Detected:** {'Yes' if r.get('overlay_detected') else 'No'}")
-            st.markdown(f"- **Suspicious XMP Toolkit:** {r.get('xmp_toolkit', 'Unknown')}")
-            st.markdown(f"- **PDF Producer:** {r.get('pdf_producer', 'Unknown')}")
-            st.markdown(f"- **Tamper Risk Score:** {r.get('risk_score', 'N/A')}")
+            # --- METADATA ---
+            st.subheader("🧾 Core Metadata")
+            if r.get("metadata"):
+                for k, v in r["metadata"].items():
+                    st.markdown(f"- **{k}**: {v}")
+            else:
+                st.markdown("*None found*")
 
-            st.markdown("### Embedded JavaScript:")
-            embedded_js = r.get("embedded_js", [])
-            if embedded_js:
-                for js_snippet in embedded_js:
+            # --- XFA & ACROFORM ---
+            st.subheader("📑 Form & Dynamic Content")
+            st.markdown(f"- **Has AcroForm:** {'Yes' if r.get('has_acroform') else 'No'}")
+            st.markdown(f"- **Has XFA:** {'Yes' if r.get('has_xfa') else 'No'}")
+
+            # --- EMBEDDED FILES ---
+            st.subheader("📎 Embedded Files")
+            if r.get("embedded_files"):
+                for item in r["embedded_files"]:
+                    st.code(item)
+            else:
+                st.markdown("*None detected*")
+
+            # --- JAVASCRIPT ---
+            st.subheader("⚠️ Embedded JavaScript")
+            if r.get("js"):
+                for js_snippet in r["js"]:
                     st.code(js_snippet)
             else:
                 st.markdown("*None detected*")
 
-            st.markdown("### Notes:")
+            # --- FONT WARNINGS ---
+            st.subheader("🧵 Font Obfuscation Warnings")
+            if r.get("font_warnings"):
+                for warn in r["font_warnings"]:
+                    st.warning(warn)
+            else:
+                st.markdown("*None detected*")
+
+            # --- BYTE RANGE / LIBRARY CHECKS ---
+            st.subheader("🔒 Signature & Generation Info")
+            st.markdown(f"- **ByteRange Tamper Detected:** {'Yes' if r.get('byte_range_mismatch') else 'No'}")
+            st.markdown(f"- **Hidden Library Usage:** {'Yes' if r.get('hidden_lib_usage') else 'No'}")
+
+            # --- NOTES / FLAGS ---
+            st.subheader("📝 Notes & Forensic Flags")
             if r.get("notes"):
                 for note in r["notes"]:
                     st.markdown(f"- {note}")
             else:
-                st.markdown("*No additional notes.*")
+                st.markdown("*None*")
 
-    else:
-        st.info("Please upload a PDF to begin.")
+            st.markdown("---")
+            st.success("✅ Scan Complete – Review all sections above.")
 
 if __name__ == "__main__":
     main()
