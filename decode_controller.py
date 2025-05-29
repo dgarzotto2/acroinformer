@@ -1,49 +1,49 @@
-# decode_controller.py
-
 import os
-from metadata import extract_metadata
-from suppression_detector import detect_suppression_flags
-from license_checker import check_pdf_license
-from gpt_fraud_summary import generate_fraud_summary
-from entity_extraction import extract_entities
-from signature_validator import validate_signatures
+import fitz
+import hashlib
+import datetime
+from modules.extract_metadata import extract_metadata
+from modules.entity_extraction import extract_entities
+from modules.ocr_fallback import run_ocr
+from modules.geoip_resolver import resolve_geoip
+from modules.gpt_fraud_summary import summarize_fraud
+from modules.utils.utility import is_agpl_pdf
 
-def decode_single_pdf(file_path):
-    metadata = extract_metadata(file_path)
-    suppression_flags = detect_suppression_flags(file_path)
-    license_flags = check_pdf_license(metadata)
-    signature_flags = validate_signatures(file_path)
-    entities = extract_entities(file_path, metadata)
-    summary = generate_fraud_summary(metadata, entities, suppression_flags)
-
-    return {
-        "filename": os.path.basename(file_path),
-        "metadata": metadata,
-        "entities": entities,
-        "suppression_flags": suppression_flags,
-        "license_flags": license_flags,
-        "signature_flags": signature_flags,
-        "summary": summary
+def decode_pdf(file_path):
+    result = {
+        "sha256": None,
+        "metadata": {},
+        "entities": [],
+        "gps": [],
+        "notes": [],
+        "fraud_flags": [],
+        "obfuscation_flags": [],
+        "agpl_license_flag": False,
+        "cid_font_usage": False,
     }
 
-def decode_batch_pdfs(file_paths):
-    results = []
-    seen_keys = set()
-    for path in file_paths:
-        result = decode_single_pdf(path)
-        batch_flags = []
+    with open(file_path, "rb") as f:
+        file_bytes = f.read()
+        result["sha256"] = hashlib.sha256(file_bytes).hexdigest()
 
-        key = (
-            result["metadata"].get("document_id"),
-            str(result["metadata"].get("creation_date")),
-            str(result["metadata"].get("entities"))
-        )
+    try:
+        doc = fitz.open(file_path)
+        metadata = extract_metadata(doc)
+        result["metadata"] = metadata
+        result["cid_font_usage"] = metadata.get("cid_fonts_detected", False)
+        result["agpl_license_flag"] = is_agpl_pdf(metadata)
+        if result["agpl_license_flag"]:
+            result["fraud_flags"].append("PDF generated with AGPL/GPL-bound library")
 
-        if key in seen_keys:
-            batch_flags.append("❗ Duplicate document metadata detected across batch.")
-        else:
-            seen_keys.add(key)
+        if metadata.get("byte_range_mismatch"):
+            result["fraud_flags"].append("ByteRange tampering detected")
 
-        result["batch_duplicate_flags"] = batch_flags
-        results.append(result)
-    return results
+        result["entities"] = extract_entities(doc, metadata)
+        result["gps"] = [e.get("gps") for e in result["entities"] if "gps" in e]
+        if metadata.get("cid_fonts_detected"):
+            result["obfuscation_flags"].append("CID font suppression likely")
+
+    except Exception as e:
+        result["notes"].append(f"PDF decoding error: {str(e)}")
+
+    return result
