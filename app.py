@@ -20,19 +20,15 @@ def main():
     st.title("AcroInformer")
     st.write("**Digital Forensic Document Examination**")
 
-    # File uploader
     uploaded_file = st.file_uploader("Upload a PDF document", type=["pdf"])
     if not uploaded_file:
         st.info("Please upload a PDF to begin analysis.")
         return
 
-    # Save and read bytes
     file_path, file_bytes = save_uploaded_file(uploaded_file)
-
-    # Extract metadata (pass both path and bytes)
+    # <-- NOW calling with two arguments
     metadata = extract_metadata(file_path, file_bytes)
 
-    # Display metadata summary
     st.header("Metadata Summary")
     st.markdown(f"**Creation Date:** {metadata.get('creation_date', '—')}")
     st.markdown(f"**Modification Date:** {metadata.get('mod_date', '—')}")
@@ -43,7 +39,6 @@ def main():
     st.markdown(f"**Tamper Risk:** {metadata.get('tamper_risk', '—')}")
     st.markdown(f"**Signature Overlay Detected:** {'Yes' if metadata.get('signature_overlay_detected') else 'No'}")
 
-    # Download button for the original PDF
     st.header("Download / Preview")
     st.download_button(
         label="Download PDF",
