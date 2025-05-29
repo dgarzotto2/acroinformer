@@ -1,54 +1,70 @@
+import streamlit as st
 import os
 import tempfile
-import streamlit as st
-from extract_metadata import extract_metadata
 import hashlib
+from extract_metadata import extract_metadata
+from gpt_fraud_summary import generate_gpt_summary
+from affidavit_writer import generate_affidavit_pdf
 
-st.set_page_config(page_title="AcroInformer", layout="wide")
+st.set_page_config(page_title="Forensic PDF Analyzer", layout="wide")
 
-st.title("AcroInformer – Forensic PDF AcroForm & Metadata Validator")
-st.markdown("Upload one or more PDF files to extract metadata, AcroForm structure, and signature indicators.")
+st.title("Forensic PDF Analyzer")
+st.markdown("Upload PDFs to analyze metadata, detect tampering, and generate affidavit-ready forensic summaries.")
 
-uploaded_files = st.file_uploader("Upload PDF(s)", type=["pdf"], accept_multiple_files=True)
+uploaded_files = st.file_uploader("Choose PDF files", type="pdf", accept_multiple_files=True)
 
 if uploaded_files:
-    temp_dir = tempfile.mkdtemp(dir="/tmp")
-    file_map = {}
-    for uploaded in uploaded_files:
-        file_path = os.path.join(temp_dir, uploaded.name)
-        with open(file_path, "wb") as f:
-            f.write(uploaded.read())
-        file_map[uploaded.name] = file_path
+    with tempfile.TemporaryDirectory() as temp_dir:
+        st.success("Files uploaded. Processing...")
 
-    metadata_list = []
+        metadata_list = []
+        for uploaded in uploaded_files:
+            file_path = os.path.join(temp_dir, uploaded.name)
+            with open(file_path, "wb") as f:
+                f.write(uploaded.read())
 
-    for fname, fpath in file_map.items():
-        with open(fpath, "rb") as f:
-            fbytes = f.read()
-        try:
-            metadata = extract_metadata(fpath, fbytes)
-            metadata["filename"] = fname
-            metadata["sha256"] = hashlib.sha256(fbytes).hexdigest()
-            metadata_list.append(metadata)
-        except Exception as e:
-            st.error(f"❌ Failed to extract metadata from {fname}: {str(e)}")
-            continue
+            with open(file_path, "rb") as f:
+                file_bytes = f.read()
 
-    for r in metadata_list:
-        st.subheader(f"📌 {r['filename']}")
-        st.code(f"SHA-256: {r['sha256']}", language="bash")
-        st.markdown(f"**Producer:** {r.get('producer') or '—'}")
-        st.markdown(f"**Creator:** {r.get('creator') or '—'}")
-        st.markdown(f"**Creation Date:** {r.get('creation_date') or '—'}")
-        st.markdown(f"**Modification Date:** {r.get('mod_date') or '—'}")
-        st.markdown(f"**XMP Toolkit:** {r.get('xmp_toolkit') or '—'}")
-        st.markdown(f"**AcroForm Present:** {'✅' if r.get('has_acroform') else '—'}")
-        st.markdown(f"**XFA Present:** {'✅' if r.get('has_xfa') else '—'}")
-        st.markdown(f"**Signature Valid:** {'✅' if r.get('has_valid_signature') else '—'}")
-        st.markdown(f"**Signature Overlay Detected:** {'⚠️' if r.get('suspect_overlay') else '—'}")
-        st.markdown(f"**Instance ID:** `{r.get('instance_id') or '—'}`")
-        st.markdown(f"**Document ID:** `{r.get('document_id') or '—'}`")
-        st.markdown("---")
+            try:
+                metadata = extract_metadata(file_path, file_bytes)
+                metadata["filename"] = uploaded.name
+                metadata["sha256"] = hashlib.sha256(file_bytes).hexdigest()
+                metadata_list.append(metadata)
+            except Exception as e:
+                st.error(f"Failed to extract metadata from {uploaded.name}: {str(e)}")
 
-else:
-    st.info("Please upload at least one PDF file to begin analysis.")
+        for r in metadata_list:
+            st.subheader(f"{r['filename']}")
+            st.code(f"SHA-256: {r['sha256']}", language="bash")
+            st.markdown(f"**Producer:** {r.get('producer', '—')}")
+            st.markdown(f"**Creator:** {r.get('creator', '—')}")
+            st.markdown(f"**Creation Date:** {r.get('creation_date', '—')}")
+            st.markdown(f"**Modification Date:** {r.get('mod_date', '—')}")
+            st.markdown(f"**PDF Library:** {r.get('toolkit', '—')}")
+            st.markdown(f"**XMP Toolkit:** {r.get('xmp_toolkit', '—')}")
+            st.markdown(f"**Has Signature Field:** {'Yes' if r.get('has_signature_field') else 'No'}")
+            st.markdown(f"**AcroForm Present:** {'Yes' if r.get('has_acroform') else 'No'}")
+            st.markdown(f"**Tamper Risk:** {r.get('tamper_risk', '—')}")
+            st.markdown("---")
+
+            # GPT summary (if key is available)
+            if "openai_api_key" in st.secrets:
+                with st.spinner("Generating GPT summary..."):
+                    try:
+                        gpt_summary = generate_gpt_summary(r)
+                        st.markdown("### GPT Forensic Summary")
+                        st.markdown(gpt_summary)
+                    except Exception as e:
+                        st.warning(f"GPT analysis failed: {str(e)}")
+
+            # Affidavit generation
+            if st.button(f"Generate Affidavit for {r['filename']}", key=r['sha256']):
+                pdf_path = generate_affidavit_pdf(r, temp_dir)
+                with open(pdf_path, "rb") as pdf_file:
+                    st.download_button(
+                        label="Download Affidavit (PDF)",
+                        data=pdf_file.read(),
+                        file_name=f"{r['filename'].replace('.pdf', '')}_affidavit.pdf",
+                        mime="application/pdf"
+                    )
