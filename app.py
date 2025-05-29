@@ -1,66 +1,81 @@
+# app.py
+
 import streamlit as st
-import os
 import tempfile
-from decode_controller import process_pdf
-from affidavit_writer import generate_affidavit
-from utils import hash_file_sha256, detect_duplicate_metadata
-import zipfile
+import os
+import shutil
+from decode_controller import decode_single_pdf, decode_batch_pdfs
+from affidavit_writer import generate_affidavit_pdf
+from zip_bundle import bundle_forensic_outputs
+from utils.utility import preview_pdf
 
-st.set_page_config(page_title="X-Ray PDF Forensic Decoder", layout="wide")
+st.set_page_config(page_title="Forensic PDF Decoder", layout="wide")
 
-def save_uploaded_files(uploaded_files, temp_dir):
-    saved_paths = []
-    for f in uploaded_files:
-        file_path = os.path.join(temp_dir, f.name)
-        with open(file_path, "wb") as out:
-            out.write(f.read())
-        saved_paths.append(file_path)
-    return saved_paths
+st.title("Forensic PDF Decoder")
+st.markdown("This tool extracts hidden financial data, detects document tampering, and generates a forensic report from uploaded PDFs.")
 
-st.title("X-Ray PDF Forensic Decoder")
-st.markdown("Upload one or more **PDF files** for full forensic extraction and fraud flagging.")
-
-uploaded_files = st.file_uploader("Upload PDFs", type="pdf", accept_multiple_files=True)
+mode = st.radio("Select Upload Mode:", ["Single PDF", "Batch Upload (multiple PDFs)"])
+uploaded_files = st.file_uploader("Upload PDF(s)", type=["pdf"], accept_multiple_files=(mode == "Batch Upload (multiple PDFs)"))
 
 if uploaded_files:
     with tempfile.TemporaryDirectory() as temp_dir:
-        saved_files = save_uploaded_files(uploaded_files, temp_dir)
-        results = []
-        metadata_bank = {}
+        file_paths = []
+        for uploaded_file in uploaded_files:
+            file_path = os.path.join(temp_dir, uploaded_file.name)
+            with open(file_path, "wb") as f:
+                f.write(uploaded_file.read())
+            file_paths.append(file_path)
 
-        for path in saved_files:
-            st.subheader(f"📄 {os.path.basename(path)}")
-            sha256 = hash_file_sha256(path)
-            try:
-                result = process_pdf(path, sha256)
-                result["sha256"] = sha256
-                metadata_bank[sha256] = result.get("metadata", {})
-                results.append(result)
+        st.divider()
 
-                st.markdown(f"**Risk Score:** {result.get('risk_score', 'N/A')}")
-                st.markdown(f"**Document ID:** {result.get('document_id', 'Unknown')}")
-                st.markdown(f"**Real Grantor:** {result.get('real_grantor_inferred', 'Not found')}")
-                st.markdown("✅ YAML and affidavit generated.")
-                st.download_button("📄 Download Affidavit", generate_affidavit(result), file_name=f"affidavit_{sha256}.pdf")
+        if mode == "Single PDF":
+            result = decode_single_pdf(file_paths[0])
 
-            except Exception as e:
-                st.error(f"Failed to process {os.path.basename(path)}: {str(e)}")
+            st.subheader("PDF Preview")
+            preview_pdf(file_paths[0])
 
-        # Check for metadata duplicates
-        dup_flags = detect_duplicate_metadata(metadata_bank)
-        if dup_flags:
-            st.warning("⚠️ Duplicate metadata patterns detected across uploaded files. This may indicate synthetic or duplicated documents:")
-            for f in dup_flags:
-                st.code(f)
+            st.subheader("Metadata")
+            st.json(result["metadata"], expanded=False)
 
-        # ZIP results
-        zip_path = os.path.join(temp_dir, "bundle_results.zip")
-        with zipfile.ZipFile(zip_path, "w") as zipf:
-            for r in results:
-                aff = generate_affidavit(r)
-                fname = f"affidavit_{r['sha256']}.pdf"
-                with open(os.path.join(temp_dir, fname), "wb") as f:
-                    f.write(aff)
-                zipf.write(os.path.join(temp_dir, fname), arcname=fname)
+            st.subheader("Entities & Routing")
+            st.json(result["entities"], expanded=False)
 
-        st.download_button("⬇️ Download All Affidavits (ZIP)", open(zip_path, "rb").read(), file_name="forensic_bundle.zip")
+            st.subheader("Suppression Flags")
+            st.json(result["suppression_flags"], expanded=False)
+
+            st.subheader("License Flags")
+            st.json(result["license_flags"], expanded=False)
+
+            st.subheader("GPT Fraud Summary")
+            st.markdown(result["summary"])
+
+            st.download_button(
+                "Download Affidavit PDF",
+                generate_affidavit_pdf(result),
+                file_name="affidavit_summary.pdf"
+            )
+
+        else:
+            results = decode_batch_pdfs(file_paths)
+
+            for result in results:
+                st.subheader(f"📄 {result['filename']}")
+                preview_pdf(os.path.join(temp_dir, result["filename"]))
+                with st.expander("Metadata"):
+                    st.json(result["metadata"])
+                with st.expander("Entities & Routing"):
+                    st.json(result["entities"])
+                with st.expander("Suppression Flags"):
+                    st.json(result["suppression_flags"])
+                with st.expander("License Flags"):
+                    st.json(result["license_flags"])
+                with st.expander("Batch Duplicate Alert"):
+                    st.warning(result["batch_duplicate_flags"])
+                with st.expander("GPT Fraud Summary"):
+                    st.markdown(result["summary"])
+
+            zip_data = bundle_forensic_outputs(results)
+            st.download_button("📥 Download ZIP Bundle of Reports", zip_data, file_name="forensic_reports.zip")
+
+st.divider()
+st.caption("This forensic decoder checks CID masking, raster overlays, AGPL/GPL risks, LaunchActions, and synthetic metadata patterns.")
