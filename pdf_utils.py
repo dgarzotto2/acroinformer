@@ -1,12 +1,10 @@
-# pdf_utils.py
-
 from PyPDF2 import PdfReader
 from lxml import etree
 
 def extract_metadata(file_path: str, file_bytes: bytes) -> dict:
     """
-    Extract basic PDF metadata, AcroForm/signature info,
-    and detect visible signature overlays (annotation stamps).
+    Extract basic PDF metadata, detect AcroForm and signature fields,
+    parse XMP Toolkit, and detect stamp‐style signature overlays.
     """
     # Load PDF
     reader = PdfReader(file_path)
@@ -37,7 +35,7 @@ def extract_metadata(file_path: str, file_bytes: bytes) -> dict:
             except Exception:
                 continue
 
-    # Signature‐overlay detection: look for /Stamp annotations on any page
+    # Signature‐overlay detection: scan for /Stamp annotations
     signature_overlay_detected = False
     for page in reader.pages:
         annots = page.get("/Annots", [])
@@ -54,7 +52,6 @@ def extract_metadata(file_path: str, file_bytes: bytes) -> dict:
 
     # Core metadata fields
     producer      = info.get("/Producer")
-    creator       = info.get("/Creator")
     creation_date = info.get("/CreationDate")
     mod_date      = info.get("/ModDate")
 
@@ -67,7 +64,7 @@ def extract_metadata(file_path: str, file_bytes: bytes) -> dict:
 
     return {
         "producer": producer,
-        "toolkit": producer,                       # reuse Producer as “PDF Library”
+        "toolkit": producer,                       # reuse Producer as PDF Library
         "xmp_toolkit": xmp_toolkit,
         "creation_date": creation_date,
         "mod_date": mod_date,
