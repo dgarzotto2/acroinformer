@@ -1,56 +1,66 @@
 import streamlit as st
-from affidavit_writer import render_affidavit
-from acroform_audit import audit_acroform_fields
-from metadata_comparator import compare_metadata
+import tempfile
+import os
+from metadata_comparator import extract_metadata
 
-# Example metadata collection loop — assumed earlier
-all_metadata = []
-all_acroforms = []
+st.set_page_config(page_title="AcroInformer", layout="wide")
 
-for fname, fpath in file_map.items():
-    with open(fpath, "rb") as f:
-        file_bytes = f.read()
+st.title("📄 AcroInformer – Forensic Metadata Comparator")
 
-    metadata = extract_metadata(fpath, file_bytes)
-    acro_data = audit_acroform_fields(file_bytes, filename=fname)
+st.markdown(
+    """
+    Upload two or more PDF files to compare their embedded metadata, XMP toolkit versions, 
+    creation/modification timestamps, and digital fingerprinting. This tool performs a chain-of-custody-safe, 
+    read-only scan to detect synthetic or mass-produced document traits.
+    """
+)
 
-    all_metadata.append(metadata)
-    all_acroforms.append(acro_data)
+uploaded_files = st.file_uploader("Upload PDF files", type="pdf", accept_multiple_files=True)
 
-# Metadata Summary
-st.header("📄 Metadata Comparison Report")
+if uploaded_files and len(uploaded_files) >= 2:
+    with st.spinner("Analyzing PDFs..."):
+        temp_dir = tempfile.mkdtemp(dir="/tmp")
+        results = []
 
-if len(all_metadata) >= 2:
-    meta_result = compare_metadata(all_metadata)
-    for issue in meta_result["discrepancies"]:
-        st.warning(f"⚠️ {issue}")
-    if meta_result["flags"]:
-        for f in meta_result["flags"]:
-            st.error(f"🚨 {f}")
-else:
-    st.info("Upload at least two files for metadata comparison.")
+        for uploaded in uploaded_files:
+            fname = uploaded.name
+            fbytes = uploaded.read()
+            fpath = os.path.join(temp_dir, fname)
 
-# AcroForm Summary
-st.header("🧾 AcroForm Audit Summary")
+            with open(fpath, "wb") as f:
+                f.write(fbytes)
 
-for acro in all_acroforms:
-    with st.expander(f"Form Audit: {acro['filename']}"):
-        if not acro["has_acroform"]:
-            st.info("No AcroForm found.")
+            try:
+                result = extract_metadata(fpath)
+                results.append(result)
+            except Exception as e:
+                st.error(f"Error processing {fname}: {str(e)}")
+
+    st.success(f"{len(results)} files analyzed.")
+    st.divider()
+
+    for r in results:
+        st.subheader(f"📌 {r['filename']}")
+        st.code(f"SHA-256: {r['sha256']}", language="bash")
+        st.markdown(f"**Producer:** {r['producer'] or '—'}")
+        st.markdown(f"**Creator:** {r['creator'] or '—'}")
+        st.markdown(f"**Creation Date:** {r['creation_date'] or '—'}")
+        st.markdown(f"**Modification Date:** {r['mod_date'] or '—'}")
+        st.markdown(f"**XMP Toolkit:** {r['xmp_toolkit'] or '—'}")
+        st.markdown(f"**Instance ID:** `{r['instance_id'] or '—'}`")
+        st.markdown(f"**Document ID:** `{r['document_id'] or '—'}`")
+
+        if r["metadata_flags"]:
+            st.warning("⚠️ Forensic Flags:")
+            for flag in r["metadata_flags"]:
+                st.markdown(f"- {flag}")
         else:
-            st.success("AcroForm structure detected.")
-            st.write(f"Fields found: {acro['field_names']}")
-            if acro["empty_fields"]:
-                st.warning(f"Empty fields: {acro['empty_fields']}")
-            if acro["signature_fields"]:
-                st.info(f"Signature fields: {acro['signature_fields']}")
-            if acro["synthetic_warnings"]:
-                for warn in acro["synthetic_warnings"]:
-                    st.error(f"⚠️ {warn}")
+            st.success("✅ No anomalies detected in metadata.")
 
-# Optional PDF affidavit generation
-st.header("📑 Forensic Affidavit Summary")
-if st.button("Generate Forensic PDF Report"):
-    affidavit_path = render_affidavit(all_metadata, all_acroforms)
-    st.success("Affidavit ready.")
-    st.download_button("Download Affidavit", open(affidavit_path, "rb"), file_name="forensic_affidavit.pdf")
+        with st.expander("🔍 Raw XMP Packet", expanded=False):
+            st.code(r["raw_xmp"] or "None found", language="xml")
+
+        st.divider()
+
+else:
+    st.info("Please upload at least two PDF files to begin comparison.")
