@@ -1,1 +1,11 @@
+# Pin a NumPy wheel so Streamlit’s dependency on numpy<2 installs a prebuilt wheel
+numpy==1.25.4
+
+# Core app dependencies
 streamlit==1.32.0
+PyPDF2==3.0.0
+cryptography==41.0.0
+click==8.1.3
+
+# (Optional) only for dev/CI; remove or move to dev-requirements.txt for Cloud
+pytest==7.2.2
