@@ -13,7 +13,7 @@ from zip_exporter import create_zip_bundle
 
 st.set_page_config(page_title="Acroform Informer", layout="wide")
 
-# Dark theme override (force style)
+# Dark mode override
 st.markdown("""
     <style>
     body {
@@ -52,7 +52,7 @@ if uploaded_files and len(uploaded_files) >= 2:
             f.write(file.read())
         file_map[file.name] = file_path
 
-    # Extract metadata and log hashes
+    # Extract metadata and compute hashes
     st.subheader("Extracted Metadata & SHA-256 Hashes")
     metadata = {}
     for fname, fpath in file_map.items():
@@ -66,7 +66,7 @@ if uploaded_files and len(uploaded_files) >= 2:
         st.text(f"SHA-256: {sha256}")
         st.json(meta)
 
-    # Prepare report
+    # Initialize output report
     report_csv = os.path.join(temp_dir, "batch_report.csv")
     init_report_csv(report_csv)
 
@@ -99,7 +99,7 @@ if uploaded_files and len(uploaded_files) >= 2:
     if not results:
         st.info("No suspicious matches (score > 50) were detected.")
 
-    # Export ZIP
+    # Export ZIP bundle
     zip_path = os.path.join(temp_dir, "evidence_bundle.zip")
     create_zip_bundle(affidavit_dir, report_csv, zip_path)
 
