@@ -1,27 +1,33 @@
 # gpt_fraud_summary.py
 
-import openai
-from utils.utils import summarize_entities_for_gpt
+def generate_fraud_summary(metadata, entities, suppression_flags):
+    lines = []
 
-def generate_fraud_summary(entities, metadata, filename, suppression_flags, license_flags, batch_duplicates=None):
-    gpt_input = f"""
-Filename: {filename}
-Metadata Summary: {metadata}
-Suppression Flags: {suppression_flags}
-License Flags: {license_flags}
-Batch Duplication Flags: {batch_duplicates or []}
-Entities: {summarize_entities_for_gpt(entities)}
+    lines.append("## Forensic Risk Summary")
+    if suppression_flags:
+        lines.append("**Suppression Flags:**")
+        for f in suppression_flags:
+            lines.append(f"- {f}")
 
-What are the potential fraud indicators? Focus on document generation method, CID or license risks, entity anomalies, metadata reuse.
-"""
+    if metadata.get("xfa_present"):
+        lines.append("- XFA forms detected – potential for runtime injection or dynamic field suppression.")
 
-    try:
-        response = openai.ChatCompletion.create(
-            model="gpt-4",
-            messages=[{"role": "user", "content": gpt_input}],
-            temperature=0.4,
-            max_tokens=400
-        )
-        return response.choices[0].message["content"].strip()
-    except Exception as e:
-        return f"GPT Error: {str(e)}"
+    if metadata.get("has_javascript"):
+        lines.append("- Embedded JavaScript present – investigate for auto-actions or remote routing logic.")
+
+    fonts = metadata.get("fonts", [])
+    if any("CID" in f or "Identity" in f for f in fonts):
+        lines.append("- CID-masked fonts detected – names or routing info may be obfuscated.")
+
+    if metadata.get("producer") and "ABCpdf" in metadata.get("producer", ""):
+        lines.append("- Document generated with ABCpdf – high risk for Unicode and font suppression.")
+    elif metadata.get("producer") and "iText" in metadata.get("producer", ""):
+        lines.append("- iText PDF engine detected – confirm ToUnicode maps and font coverage.")
+    elif metadata.get("producer") and "Ghostscript" in metadata.get("producer", ""):
+        lines.append("- Ghostscript used – check for raster or ASCII85 stream flattening.")
+
+    lines.append("\n## Entity Snapshot")
+    for k, v in entities.items():
+        lines.append(f"- {k}: {v}")
+
+    return "\n".join(lines)
