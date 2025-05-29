@@ -1,46 +1,73 @@
-from PyPDF2 import PdfReader
-from datetime import datetime
-import re
+import hashlib
+import fitz  # PyMuPDF
+import PyPDF2
+import xml.etree.ElementTree as ET
 
-def clean_date(value):
-    if not value:
-        return None
-    try:
-        return datetime.strptime(value.strip("D:").split("+")[0], "%Y%m%d%H%M%S").isoformat()
-    except Exception:
-        return value
-
-def extract_metadata(filepath, file_bytes):
-    reader = PdfReader(filepath)
-    info = reader.metadata or {}
-    xmp = reader.xmp_metadata if hasattr(reader, "xmp_metadata") else {}
-
-    meta = {
-        "filename": filepath.split("/")[-1],
-        "producer": info.get("/Producer", "Unknown"),
-        "created": clean_date(info.get("/CreationDate")),
-        "modified": clean_date(info.get("/ModDate")),
-        "xmp_toolkit": xmp.get("xmp:CreatorTool") if xmp else None,
-        "flags": []
+def extract_metadata(file_path, file_bytes):
+    sha256 = hashlib.sha256(file_bytes).hexdigest()
+    result = {
+        "filename": file_path.split("/")[-1],
+        "sha256": sha256,
+        "producer": None,
+        "creator": None,
+        "creation_date": None,
+        "mod_date": None,
+        "xmp_toolkit": None,
+        "xmp_instance_id": None,
+        "xmp_document_id": None,
+        "has_acroform": False,
+        "has_signature": False,
+        "signature_type": "none"
     }
 
-    # Detect reused XMP IDs
-    if xmp:
-        xmp_id = xmp.get("xmpMM:DocumentID")
-        instance_id = xmp.get("xmpMM:InstanceID")
-        if xmp_id and instance_id and xmp_id == instance_id:
-            meta["flags"].append("XMP DocumentID matches InstanceID – static reuse")
+    # --- Classic PDF Metadata ---
+    try:
+        reader = PyPDF2.PdfReader(file_path)
+        info = reader.metadata or {}
 
-    # Detect matching create/modify timestamps
-    if meta["created"] and meta["modified"] and meta["created"] == meta["modified"]:
-        meta["flags"].append("Created == Modified – potential batch document")
+        result["producer"] = info.get("/Producer")
+        result["creator"] = info.get("/Creator")
+        result["creation_date"] = info.get("/CreationDate")
+        result["mod_date"] = info.get("/ModDate")
 
-    # Detect Paycom signs
-    if re.search(r"Paycom|signExe|sigId|csrf", str(file_bytes)):
-        meta["flags"].append("Paycom submission endpoint or signature token detected")
+        if "/AcroForm" in reader.trailer["/Root"]:
+            result["has_acroform"] = True
+            acro = reader.trailer["/Root"]["/AcroForm"]
+            if acro.get("/SigFlags") or acro.get("/Fields"):
+                result["has_signature"] = True
+                result["signature_type"] = "digital"
+    except Exception as e:
+        pass  # Allow fallback to PyMuPDF if PyPDF2 fails
 
-    # Detect tool-based anomalies
-    if "/Annots" not in str(reader.pages[0]):
-        meta["flags"].append("Missing annotation dictionary – flattened form or image overlay")
+    # --- Signature Check with PyMuPDF (for visible overlays) ---
+    try:
+        doc = fitz.open(stream=file_bytes, filetype="pdf")
+        for page in doc:
+            blocks = page.get_text("dict")["blocks"]
+            for b in blocks:
+                if "image" in b.get("type", "") or "/Sig" in str(b):
+                    result["has_signature"] = True
+                    if result["signature_type"] == "none":
+                        result["signature_type"] = "image"
+    except Exception:
+        pass
 
-    return meta
+    # --- XMP Metadata Parsing ---
+    try:
+        doc = fitz.open(stream=file_bytes, filetype="pdf")
+        xmp = doc.metadata.get("xmp")
+        if xmp:
+            root = ET.fromstring(xmp)
+            for elem in root.iter():
+                tag = elem.tag.lower()
+                text = elem.text
+                if tag.endswith("xmp:creatortoolkit") or "xmptoolkit" in tag:
+                    result["xmp_toolkit"] = text
+                elif tag.endswith("instanceid"):
+                    result["xmp_instance_id"] = text
+                elif tag.endswith("documentid"):
+                    result["xmp_document_id"] = text
+    except Exception:
+        pass
+
+    return result
