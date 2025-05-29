@@ -1,48 +1,78 @@
-import fitz  # PyMuPDF
+# pdf_utils.py
+
 from PyPDF2 import PdfReader
-import hashlib
-import re
+from lxml import etree
 
-def extract_metadata(file_path, file_bytes):
-    metadata = {}
+def extract_metadata(file_path: str, file_bytes: bytes) -> dict:
+    """
+    Extract basic PDF metadata, AcroForm/signature info,
+    and detect visible signature overlays (annotation stamps).
+    """
+    # Load PDF
+    reader = PdfReader(file_path)
+    info = reader.metadata or {}
+    raw_xmp = reader.xmp_metadata
 
-    # SHA256 Hash
-    metadata["sha256"] = hashlib.sha256(file_bytes).hexdigest()
-
-    try:
-        reader = PdfReader(file_path)
-        metadata["num_pages"] = len(reader.pages)
-        metadata["pdf_version"] = reader.pdf_header_version
-
-        # Document Info
-        doc_info = reader.metadata or {}
-        metadata["title"] = doc_info.get("/Title", "")
-        metadata["author"] = doc_info.get("/Author", "")
-        metadata["producer"] = doc_info.get("/Producer", "")
-        metadata["creator"] = doc_info.get("/Creator", "")
-        metadata["created"] = doc_info.get("/CreationDate", "")
-        metadata["modified"] = doc_info.get("/ModDate", "")
-        metadata["xmp_metadata"] = reader.xmp_metadata
-
-        # Form fields
+    # Parse XMP Toolkit, if present
+    xmp_toolkit = None
+    if raw_xmp:
         try:
-            metadata["has_acroform"] = "/AcroForm" in reader.trailer["/Root"]
-            metadata["acroform_fields"] = list(reader.get_fields() or {}).keys()
-        except:
-            metadata["has_acroform"] = False
-            metadata["acroform_fields"] = []
-    except Exception as e:
-        metadata["error"] = f"PyPDF2 failed: {str(e)}"
+            xml_root = etree.fromstring(raw_xmp)
+            tk = xml_root.find(".//{http://ns.adobe.com/xap/1.0/}Toolkit")
+            if tk is not None:
+                xmp_toolkit = tk.text
+        except Exception:
+            pass
 
-    # Render using MuPDF to double check fonts and stream content
-    try:
-        doc = fitz.open(stream=file_bytes, filetype="pdf")
-        metadata["fonts"] = list(set([
-            x["font"] for page in doc for x in page.get_text("dict")["blocks"]
-            if "lines" in x for line in x["lines"] for span in line["spans"]
-        ]))
-    except Exception as e:
-        metadata["fonts"] = []
-        metadata["fitz_error"] = str(e)
+    # AcroForm and cryptographic signature‐field detection
+    has_acroform = "/AcroForm" in reader.trailer["/Root"]
+    has_signature_field = False
+    if has_acroform:
+        acro = reader.trailer["/Root"]["/AcroForm"]
+        for fld in acro.get("/Fields", []):
+            try:
+                if fld.get_object().get("/FT", "") == "/Sig":
+                    has_signature_field = True
+                    break
+            except Exception:
+                continue
 
-    return metadata
+    # Signature‐overlay detection: look for /Stamp annotations on any page
+    signature_overlay_detected = False
+    for page in reader.pages:
+        annots = page.get("/Annots", [])
+        for annot in annots:
+            try:
+                obj = annot.get_object()
+                if obj.get("/Subtype") == "/Stamp":
+                    signature_overlay_detected = True
+                    break
+            except Exception:
+                continue
+        if signature_overlay_detected:
+            break
+
+    # Core metadata fields
+    producer      = info.get("/Producer")
+    creator       = info.get("/Creator")
+    creation_date = info.get("/CreationDate")
+    mod_date      = info.get("/ModDate")
+
+    # Tamper‐risk heuristics
+    tamper_risk = None
+    if creation_date and mod_date and creation_date != mod_date:
+        tamper_risk = "Timestamp mismatch"
+    elif has_acroform and not has_signature_field:
+        tamper_risk = "AcroForm without cryptographic signature"
+
+    return {
+        "producer": producer,
+        "toolkit": producer,                       # reuse Producer as “PDF Library”
+        "xmp_toolkit": xmp_toolkit,
+        "creation_date": creation_date,
+        "mod_date": mod_date,
+        "has_acroform": has_acroform,
+        "has_signature_field": has_signature_field,
+        "tamper_risk": tamper_risk,
+        "signature_overlay_detected": signature_overlay_detected,
+    }
