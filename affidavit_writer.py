@@ -3,66 +3,72 @@
 from reportlab.lib.pagesizes import LETTER
 from reportlab.pdfgen import canvas
 from datetime import datetime
+import os
 
 def generate_affidavit(meta1, meta2, score, reasons, output_path):
-    c = canvas.Canvas(output_path, pagesize=LETTER)
-    width, height = LETTER
-    margin = 50
-    line_height = 14
-    y = height - margin
+    try:
+        c = canvas.Canvas(output_path, pagesize=LETTER)
+        width, height = LETTER
 
-    # Header
-    c.setFont("Helvetica-Bold", 14)
-    c.drawString(margin, y, "Forensic PDF Affidavit")
-    y -= 2 * line_height
+        # Title
+        c.setFont("Helvetica-Bold", 16)
+        c.drawString(72, height - 72, "Forensic PDF Affidavit")
 
-    # Timestamp
-    c.setFont("Helvetica", 10)
-    c.drawString(margin, y, f"Generated on: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}")
-    y -= 2 * line_height
+        # Timestamp
+        c.setFont("Helvetica", 10)
+        c.drawString(72, height - 90, f"Generated on: {datetime.utcnow().isoformat()} UTC")
 
-    # Document 1
-    c.setFont("Helvetica-Bold", 12)
-    c.drawString(margin, y, "Document 1:")
-    y -= line_height
-    c.setFont("Helvetica", 10)
-    for key, val in meta1.items():
-        c.drawString(margin + 20, y, f"{key}: {val}")
-        y -= line_height
+        # Section: File Metadata Summary
+        c.setFont("Helvetica-Bold", 12)
+        c.drawString(72, height - 120, "File Comparison Summary:")
 
-    y -= line_height
+        y = height - 140
+        c.setFont("Helvetica", 10)
 
-    # Document 2
-    c.setFont("Helvetica-Bold", 12)
-    c.drawString(margin, y, "Document 2:")
-    y -= line_height
-    c.setFont("Helvetica", 10)
-    for key, val in meta2.items():
-        c.drawString(margin + 20, y, f"{key}: {val}")
-        y -= line_height
+        c.drawString(72, y, f"File A SHA-256: {meta1.get('sha256')}")
+        y -= 15
+        c.drawString(72, y, f"File B SHA-256: {meta2.get('sha256')}")
+        y -= 30
 
-    y -= 2 * line_height
+        c.drawString(72, y, f"Creation A: {meta1.get('creation_time')}")
+        y -= 15
+        c.drawString(72, y, f"Creation B: {meta2.get('creation_time')}")
+        y -= 30
 
-    # Score & Reasons
-    c.setFont("Helvetica-Bold", 12)
-    c.drawString(margin, y, f"Suspicion Score: {score}")
-    y -= 2 * line_height
-    c.setFont("Helvetica", 10)
-    c.drawString(margin, y, "Reasons for Flagging:")
-    y -= line_height
+        c.drawString(72, y, f"DocumentID A: {meta1.get('xmp_document_id')}")
+        y -= 15
+        c.drawString(72, y, f"DocumentID B: {meta2.get('xmp_document_id')}")
+        y -= 30
 
-    for reason in reasons:
-        c.drawString(margin + 20, y, f"- {reason}")
-        y -= line_height
-        if y < margin + 50:
-            c.showPage()
-            y = height - margin
+        c.drawString(72, y, f"InstanceID A: {meta1.get('xmp_instance_id')}")
+        y -= 15
+        c.drawString(72, y, f"InstanceID B: {meta2.get('xmp_instance_id')}")
+        y -= 30
 
-    y -= 2 * line_height
+        # Suspicion Score
+        c.setFont("Helvetica-Bold", 12)
+        c.drawString(72, y, f"Suspicion Score: {score}")
+        y -= 25
 
-    # Certification
-    c.setFont("Helvetica-Oblique", 10)
-    c.drawString(margin, y, "This analysis was conducted using forensic best practices and automation tools designed for evidentiary use.")
-    y -= line_height
-    c.drawString(margin, y, "Certified by Forensix, LLC")
-    c.save()
+        # Section: Reasons
+        c.setFont("Helvetica-Bold", 12)
+        c.drawString(72, y, "Reasons for Suspicion:")
+        y -= 20
+        c.setFont("Helvetica", 10)
+        for reason in reasons:
+            if y < 100:
+                c.showPage()
+                y = height - 72
+            c.drawString(90, y, f"- {reason}")
+            y -= 15
+
+        # Footer: Certification
+        y = 100
+        c.setFont("Helvetica-Oblique", 9)
+        c.drawString(72, y, "This report was generated using best forensic practices and tooling meeting or exceeding")
+        c.drawString(72, y - 12, "Swigdoc standards. Certified by Forensix, LLC.")
+
+        c.save()
+
+    except Exception as e:
+        print(f"[ERROR] Failed to generate affidavit: {e}")
