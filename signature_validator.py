@@ -1,21 +1,23 @@
-import logging
+# signature_validator.py
+
 from PyPDF2 import PdfReader
 
-logger = logging.getLogger(__name__)
-
-def validate_digital_signatures(file_path: str) -> bool:
-    """
-    Returns True if any real cryptographic /Sig field signature validates.
-    (Stub: PyPDF2 cannot validate by itself. Hook in real crypto library.)
-    """
+def validate_signatures(file_path):
+    results = []
     try:
         reader = PdfReader(file_path)
-        root = reader.trailer.get("/Root", {})
+        root = reader.trailer["/Root"]
         if "/AcroForm" in root:
-            for fld in root["/AcroForm"].get("/Fields", []):
-                obj = fld.get_object()
-                if obj.get("/FT") == "/Sig" and obj.get("/V"):
-                    return True
+            form = root["/AcroForm"]
+            if "/SigFlags" in form:
+                results.append("PDF includes signature flags.")
+            if "/Fields" in form and len(form["/Fields"]) > 0:
+                results.append(f"{len(form['/Fields'])} AcroForm fields found – inspect for overlays.")
+
+        if "/Annots" in root:
+            results.append("Page annotations present – potential for invisible overlays.")
+
     except Exception as e:
-        logger.error("Signature validation error", exc_info=e)
-    return False
+        results.append(f"Signature validation failed: {e}")
+
+    return results
