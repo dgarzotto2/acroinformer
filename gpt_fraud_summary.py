@@ -1,33 +1,39 @@
-# gpt_fraud_summary.py
+import openai
+import os
 
-def generate_fraud_summary(metadata, entities, suppression_flags):
-    lines = []
+def summarize_fraud(report):
+    if not report.get("metadata"):
+        return "No metadata available for GPT summary."
 
-    lines.append("## Forensic Risk Summary")
-    if suppression_flags:
-        lines.append("**Suppression Flags:**")
-        for f in suppression_flags:
-            lines.append(f"- {f}")
+    prompt = f"""
+You are a forensic AI. Analyze the following PDF decoding result and summarize fraud risks:
 
-    if metadata.get("xfa_present"):
-        lines.append("- XFA forms detected – potential for runtime injection or dynamic field suppression.")
+Metadata:
+{report.get("metadata")}
 
-    if metadata.get("has_javascript"):
-        lines.append("- Embedded JavaScript present – investigate for auto-actions or remote routing logic.")
+Fraud Flags:
+{report.get("fraud_flags")}
 
-    fonts = metadata.get("fonts", [])
-    if any("CID" in f or "Identity" in f for f in fonts):
-        lines.append("- CID-masked fonts detected – names or routing info may be obfuscated.")
+Obfuscation Flags:
+{report.get("obfuscation_flags")}
 
-    if metadata.get("producer") and "ABCpdf" in metadata.get("producer", ""):
-        lines.append("- Document generated with ABCpdf – high risk for Unicode and font suppression.")
-    elif metadata.get("producer") and "iText" in metadata.get("producer", ""):
-        lines.append("- iText PDF engine detected – confirm ToUnicode maps and font coverage.")
-    elif metadata.get("producer") and "Ghostscript" in metadata.get("producer", ""):
-        lines.append("- Ghostscript used – check for raster or ASCII85 stream flattening.")
+Entities:
+{report.get("entities")}
 
-    lines.append("\n## Entity Snapshot")
-    for k, v in entities.items():
-        lines.append(f"- {k}: {v}")
+Include:
+- Signs of document tampering
+- CID masked names or amounts
+- Known AGPL/GPL library usage
+- Risks related to synthetic or remote-edited PDFs
 
-    return "\n".join(lines)
+Respond in a formal paragraph.
+"""
+
+    response = openai.ChatCompletion.create(
+        model="gpt-4",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.3,
+        max_tokens=500
+    )
+
+    return response.choices[0].message.content.strip()
