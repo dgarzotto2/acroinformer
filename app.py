@@ -1,119 +1,47 @@
-#!/usr/bin/env python3
-import os
-import tempfile
-import hashlib
-
 import streamlit as st
-
+import tempfile
+import os
 from metadata import extract_metadata
-from scoring_engine import ScoringEngine
-from gpt_fraud_summary import generate_gpt_summary
-from affidavit_writer import generate_affidavit_pdf
 
-# 1) Configure Streamlit page (must be at top-level)
-st.set_page_config(
-    page_title="Forensic PDF Analyzer",
-    layout="wide"
-)
-
-# 2) Pure data function — no st.* calls here!
-@st.cache_data(show_spinner=False)
-def extract_and_score(path: str, data: bytes) -> dict:
-    md = extract_metadata(path, data)
-    score = ScoringEngine().score(md)
-    return {**md, **score}
+st.set_page_config(page_title="AcroInformer - PDF Metadata Forensics", layout="wide")
 
 def main():
-    # 3) All UI code lives inside main()
-    st.title("Forensic PDF Analyzer")
-    st.markdown(
-        "Upload *two or more* PDF documents to analyze metadata, "
-        "detect tampering, and generate affidavit-ready summaries."
-    )
+    st.title("📄 AcroInformer: PDF Metadata & Obfuscation Scan")
 
-    # 4) Multi-file uploader
-    uploaded_files = st.file_uploader(
-        "Choose two or more PDF files",
-        type="pdf",
-        accept_multiple_files=True
-    )
+    uploaded_file = st.file_uploader("Upload a PDF for forensic metadata analysis", type=["pdf"])
+    if uploaded_file is None:
+        st.info("Please upload a PDF to begin.")
+        return
 
-    # 5) Enforce at least two
-    if not uploaded_files or len(uploaded_files) < 2:
-        st.warning("🚨 Please upload **at least two** PDF documents to analyze.")
-        st.stop()
-
-    # 6) Process each file
-    metadata_list = []
     with tempfile.TemporaryDirectory() as temp_dir:
-        st.success(f"{len(uploaded_files)} files uploaded. Processing…")
+        file_path = os.path.join(temp_dir, uploaded_file.name)
+        with open(file_path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
 
-        for uploaded in uploaded_files:
-            # Write to temp
-            file_path = os.path.join(temp_dir, uploaded.name)
-            with open(file_path, "wb") as f:
-                f.write(uploaded.read())
+        st.success("File uploaded successfully. Running analysis...")
 
-            # Read bytes & hash
-            with open(file_path, "rb") as f:
-                file_bytes = f.read()
-            sha256 = hashlib.sha256(file_bytes).hexdigest()
+        results = extract_metadata(file_path)
 
-            # Extract and score (cached)
-            try:
-                result = extract_and_score(file_path, file_bytes)
-            except Exception as e:
-                st.error(f"Error analyzing {uploaded.name}: {e}")
-                continue
+        st.subheader("🔍 Metadata Summary")
+        st.markdown(f"- **Title:** {results.get('title') or 'Unknown'}")
+        st.markdown(f"- **Author:** {results.get('author') or 'Unknown'}")
+        st.markdown(f"- **Producer:** {results.get('producer') or 'Unknown'}")
+        st.markdown(f"- **Creation Date:** {results.get('created') or 'Unknown'}")
+        st.markdown(f"- **Modification Date:** {results.get('modified') or 'Unknown'}")
 
-            result["filename"] = uploaded.name
-            result["sha256"]   = sha256
-            metadata_list.append(result)
+        st.subheader("🛑 Obfuscation & Threat Flags")
+        st.markdown(f"- **Hidden Library Usage:** {'Yes' if results.get('hidden_lib_usage') else 'No'}")
+        st.markdown(f"- **XFA Detected:** {'Yes' if results.get('xfa_found') else 'No'}")
+        st.markdown(f"- **CID Font Present:** {'Yes' if results.get('cid_fonts_present') else 'No'}")
+        st.markdown(f"- **Launch Action Present:** {'Yes' if results.get('launch_action_found') else 'No'}")
 
-    # 7) Display results
-    for r in metadata_list:
-        st.subheader(r["filename"])
-        st.code(f"SHA-256: {r['sha256']}", language="bash")
+        st.subheader("🔐 Signature & Structure")
+        st.markdown(f"- **AcroForm Present:** {'Yes' if results.get('acroform') else 'No'}")
+        st.markdown(f"- **XMP Toolkit:** {results.get('xmp_toolkit') or 'None'}")
+        st.markdown(f"- **ByteRange Present:** {'Yes' if results.get('byte_range') else 'No'}")
 
-        st.markdown(f"- **Producer:** {r.get('producer','—')}")
-        st.markdown(f"- **Creator:** {r.get('creator','—')}")
-        st.markdown(f"- **Creation Date:** {r.get('creation_date','—')}")
-        st.markdown(f"- **Modification Date:** {r.get('mod_date','—')}")
-        st.markdown(f"- **XMP Toolkit:** {r.get('xmp_toolkit','—')}")
-        st.markdown(f"- **Has Signature Field:** {'Yes' if r.get('has_signature_field') else 'No'}")
-        st.markdown(f"- **AcroForm Present:** {'Yes' if r.get('has_acroform') else 'No'}")
-        st.markdown(f"- **Signature Overlay Detected:** {'Yes' if r.get('signature_overlay_detected') else 'No'}")
-        st.markdown(f"- **Hidden Library Usage:** {'Yes' if r.get('hidden_lib_usage') else 'No'}")
-        st.markdown(f"- **Risk Score:** {r.get('risk_score', 0)}")
-        flags = r.get("risk_flags", [])
-        st.markdown(f"- **Risk Flags:** {', '.join(flags) if flags else 'None'}")
-        st.markdown("---")
-
-        # 8) GPT forensic summary
-        if "openai_api_key" in st.secrets:
-            with st.spinner("Generating GPT summary…"):
-                try:
-                    summary = generate_gpt_summary(r)
-                    st.markdown("#### GPT Forensic Summary")
-                    st.markdown(summary)
-                except Exception as e:
-                    st.warning(f"GPT summary failed: {e}")
-
-        # 9) Affidavit generation
-        btn_key = f"affidavit_{r['sha256']}"
-        if st.button(f"Generate Affidavit for {r['filename']}", key=btn_key):
-            try:
-                pdf_path = generate_affidavit_pdf(r, temp_dir)
-                with open(pdf_path, "rb") as pdf_file:
-                    st.download_button(
-                        label="Download Affidavit (PDF)",
-                        data=pdf_file.read(),
-                        file_name=f"{r['filename'].rsplit('.',1)[0]}_affidavit.pdf",
-                        mime="application/pdf"
-                    )
-            except Exception as e:
-                st.error(f"Affidavit generation failed: {e}")
+        st.subheader("🧬 Internal Metadata Dump")
+        st.json(results)
 
 if __name__ == "__main__":
     main()
-    
