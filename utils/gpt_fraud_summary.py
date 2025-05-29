@@ -1,13 +1,18 @@
+# utils/gpt_fraud_summary.py
+
 import streamlit as st
 import openai
 
 OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
+openai.api_key = OPENAI_API_KEY
 
 def generate_fraud_summary(entities: list, metadata: dict, filename: str) -> str:
-    openai.api_key = OPENAI_API_KEY
-
+    """
+    Generate a forensic fraud summary using GPT based on extracted entities and metadata.
+    """
     prompt = f"""
 You are a digital forensics investigator. A document named '{filename}' has been processed.
+
 Entities:
 {entities}
 
