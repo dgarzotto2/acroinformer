@@ -1,32 +1,46 @@
 # scoring_engine.py
 
-def score_documents(meta_a, meta_b):
+def score_documents(meta1, meta2):
     score = 0
     reasons = []
 
-    if meta_a["xmp_document_id"] and meta_b["xmp_document_id"]:
-        if meta_a["xmp_document_id"] == meta_b["xmp_document_id"]:
-            score += 30
-            reasons.append("Matching XMP DocumentID")
+    # SHA-256 match (very suspicious)
+    if meta1.get("sha256") == meta2.get("sha256"):
+        score += 50
+        reasons.append("Exact SHA-256 hash match — files may be duplicates or have identical content.")
 
-    if meta_a["xmp_instance_id"] and meta_b["xmp_instance_id"]:
-        if meta_a["xmp_instance_id"] == meta_b["xmp_instance_id"]:
-            score += 20
-            reasons.append("Matching XMP InstanceID")
-
-    if meta_a["creation_date"] == meta_b["creation_date"]:
+    # Creation time match
+    if meta1.get("creation_time") == meta2.get("creation_time"):
         score += 15
-        reasons.append("Identical creation timestamp")
+        reasons.append("Matching creation timestamps.")
 
-    if meta_a["mod_date"] == meta_b["mod_date"]:
+    # Modification time match
+    if meta1.get("modification_time") == meta2.get("modification_time"):
         score += 10
-        reasons.append("Identical modification timestamp")
+        reasons.append("Matching modification timestamps.")
 
-    form_names_a = set(f["name"] for f in meta_a["form_fields"])
-    form_names_b = set(f["name"] for f in meta_b["form_fields"])
-    shared_fields = form_names_a.intersection(form_names_b)
-    if shared_fields:
-        score += min(10, len(shared_fields) * 2)
-        reasons.append(f"Shared AcroForm fields: {', '.join(shared_fields)}")
+    # XMP Document ID match
+    if meta1.get("xmp_document_id") and meta1.get("xmp_document_id") == meta2.get("xmp_document_id"):
+        score += 20
+        reasons.append("Matching XMP Document ID (suggests shared origin or reuse).")
+
+    # XMP Instance ID match
+    if meta1.get("xmp_instance_id") and meta1.get("xmp_instance_id") == meta2.get("xmp_instance_id"):
+        score += 15
+        reasons.append("Matching XMP Instance ID.")
+
+    # AcroForm structure overlap
+    fields1 = set(meta1.get("acroform_fields", []))
+    fields2 = set(meta2.get("acroform_fields", []))
+    if fields1 and fields2:
+        intersection = fields1 & fields2
+        if intersection:
+            score += 20
+            reasons.append(f"{len(intersection)} overlapping AcroForm field definitions.")
+
+    # Same producer string
+    if meta1.get("producer") and meta1.get("producer") == meta2.get("producer"):
+        score += 5
+        reasons.append("Same PDF producer metadata string.")
 
     return score, reasons
