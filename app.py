@@ -1,79 +1,67 @@
-import os
-import tempfile
 import streamlit as st
-from utils.metadata import extract_metadata
+import base64
 from utils.decode_controller import decode_pdf
-from utils.entity_extraction import extract_entities
-from utils.gpt_trigger_controller import run_gpt_if_triggered, batch_gpt_summary
+from utils.yaml_exporter import export_yaml
+from utils.affidavit_writer import generate_affidavit_pdf
+from utils.zip_bundle import bundle_results
+import hashlib
 
-st.set_page_config(page_title="AcroInformer – PDF Metadata & Tamper Audit", layout="wide")
-st.title("AcroInformer – PDF Forensics & Tamper Audit")
+st.set_page_config(
+    page_title="AcroInformer – PDF Metadata & Tamper Audit",
+    layout="wide"
+)
 
-uploaded_files = st.file_uploader("Upload PDF(s) for analysis", type=["pdf"], accept_multiple_files=True)
-use_fitz = st.radio("Decoding Mode", ["PyMuPDF (fitz)", "Static (no fitz)"]) == "PyMuPDF (fitz)"
+st.title("AcroInformer – PDF Metadata & Tamper Audit")
+st.markdown("Upload one or more PDF documents for forensic analysis. Output includes decoded entities, metadata, risk scores, YAML, and affidavit generation.")
+
+uploaded_files = st.file_uploader("Upload PDF(s)", type=["pdf"], accept_multiple_files=True)
+
+decoding_mode = st.radio("Decoding Mode", ["PyMuPDF (fitz)", "Static (no fitz)"])
+static_mode = decoding_mode == "Static (no fitz)"
 
 results = []
-gpt_outputs = {}
-
 if uploaded_files:
     for uploaded_file in uploaded_files:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
-            tmp_file.write(uploaded_file.read())
-            tmp_path = tmp_file.name
+        st.subheader(f"Analysis: {uploaded_file.name}")
+        file_bytes = uploaded_file.read()
+        sha256 = hashlib.sha256(file_bytes).hexdigest()
+        result = decode_pdf(file_bytes, static_mode=static_mode)
 
-        st.subheader(f"📄 Analysis: {uploaded_file.name}")
+        st.markdown(f"**SHA-256:** `{sha256}`")
+        st.markdown(f"**Error:** {result.get('error', 'None')}")
 
-        try:
-            with open(tmp_path, "rb") as f:
-                file_bytes = f.read()
+        st.markdown("### Metadata")
+        st.json(result.get("metadata", {}))
 
-            metadata = extract_metadata(file_bytes)
-            decoded_blocks = decode_pdf(file_bytes, use_fitz=use_fitz)
-            full_text = "\n".join([b.get("text", "") for b in decoded_blocks])
-            entities = extract_entities(full_text)
+        st.markdown("### Suppression Flags")
+        st.write(result.get("suppression_flags", []))
 
-            # Suppression + risk display
-            st.markdown("### Suppression Flags & Risk Scores")
-            for b in decoded_blocks:
-                page = b.get("page", "?")
-                flags = b.get("suppression_flags", [])
-                score = b.get("risk_score", 0)
-                if flags:
-                    st.write(f"- Page {page}: {flags} | Risk: {score}")
+        st.markdown("### Fraud Flags")
+        st.write(result.get("fraud_flags", []))
 
-            # Entity list
-            st.markdown("### Extracted Entities")
-            if entities:
-                for e in entities:
-                    st.write(f"- {e}")
-            else:
-                st.info("No entities extracted.")
+        st.markdown("### Extracted Entities")
+        st.json(result.get("entities", {}))
 
-            # GPT Summary Trigger
-            summary = run_gpt_if_triggered(decoded_blocks, metadata, entities, uploaded_file.name)
-            if summary:
-                st.markdown("### GPT Fraud Summary")
-                st.code(summary, language="markdown")
-            else:
-                st.info("No GPT summary triggered.")
+        st.markdown("### Decoded Text")
+        st.text_area("Decoded Content", result.get("decoded_text", ""), height=200)
 
-            # Save results
-            results.append({
-                "filename": uploaded_file.name,
-                "blocks": decoded_blocks,
-                "metadata": metadata,
-                "entities": entities
-            })
-            if summary:
-                gpt_outputs[uploaded_file.name] = summary
+        st.markdown("### GPT Fraud Summary")
+        st.text(result.get("gpt_summary", ""))
 
-        except Exception as e:
-            st.error(f"Error processing {uploaded_file.name}: {e}")
+        yaml_data = export_yaml(uploaded_file.name, result)
+        st.download_button("Download YAML", yaml_data, file_name=uploaded_file.name.replace(".pdf", "_entities.yaml"))
 
-    # Batch Summary Export Section
-    if gpt_outputs:
-        st.markdown("---")
-        st.markdown("### GPT Summaries (All Triggered Files)")
-        for fname, summary in gpt_outputs.items():
-            st.write(f"**{fname}**")
-            st.code(summary, language="markdown")
+        affidavit_pdf = generate_affidavit_pdf(uploaded_file.name, result)
+        st.download_button("Download Affidavit PDF", affidavit_pdf, file_name=uploaded_file.name.replace(".pdf", "_affidavit.pdf"))
+
+        results.append({
+            "filename": uploaded_file.name,
+            "sha256": sha256,
+            "yaml": yaml_data,
+            "affidavit": affidavit_pdf
+        })
+
+if results:
+    if st.button("Bundle All Results into ZIP"):
+        zip_bytes = bundle_results(results)
+        st.download_button("Download ZIP Bundle", zip_bytes, file_name="forensic_bundle.zip")
